@@ -537,7 +537,9 @@ async function main() {
       // 8.4: extreme document family (original ≈ pure LM, gen > 0.8) —
       // escalate grind rounds and rebuild sentence-length structure first.
       const extreme = (chosen.score?.p_ai_gen ?? 0) > 0.8;
-      const roundsN = extreme ? (cfg.grind?.roundsExtreme ?? 8) : gc.rounds;
+      const roundsN = extreme ? (cfg.grind?.roundsExtreme ?? 15) : gc.rounds;
+      const worstN = extreme ? (cfg.grind?.worstExtreme ?? 4) : gc.worst;
+      const dryStop = extreme ? 2 : 1;
       const bandLo = (cfg.filters?.cvBand?.[0] ?? 0.45) * 0.9;
       console.log(`=== 5.5/7 段級研磨（gen ${fmt(chosen.score?.p_ai_gen)} > ${gc.genGate}${extreme ? '，極端文檔：8 輪＋句級降級' : ''}，NLI 守門）===`);
       if (extreme && chosen.stats?.cv > 0 && chosen.stats.cv < bandLo) {
@@ -561,7 +563,7 @@ async function main() {
       const parasIn = idxList.map((i) => chosen.paras[i] || originalsByPara[i] || '');
       const { paras: ground, stats: gstats } = await grindParas({
         origParas, paras: parasIn, lang,
-        rounds: roundsN, worst: gc.worst, gain: gc.gain,
+        rounds: roundsN, worst: worstN, gain: gc.gain, dryStop,
         log: (m) => console.log(`  ${m}`),
       });
       const newProse = ground.join('\n\n');

@@ -73,10 +73,10 @@ async function sentenceModeRegen({ paras, idx, origParas, lang = 'en', maxSents 
 
 export async function grindParas({
   origParas, paras, lang = 'en',
-  rounds = 3, worst = 3, gain = 0.02, gate = 0.08, gramCheck = 0.5,
+  rounds = 3, worst = 3, gain = 0.02, gate = 0.08, gramCheck = 0.5, dryStop = 1,
   temps = DEFAULT_TEMPS, log = () => {},
 }) {
-  const stats = { roundsRun: 0, attempts: 0, accepted: 0, noGain: 0, rejected: 0, failed: 0, paraDeltas: {} };
+  const stats = { roundsRun: 0, attempts: 0, accepted: 0, noGain: 0, rejected: 0, failed: 0, paraDeltas: {}, dryRounds: 0 };
   const out = [...paras];
   const paraScores = async (ps) => (await scoreTexts(ps)).map((s) => s.p_ai_gen ?? 1);
 
@@ -142,7 +142,11 @@ export async function grindParas({
         }
       }
     }
-    if (!acceptedAny) { log(`round ${r}: no paragraph improved, stopping early`); break; }
+    if (!acceptedAny) {
+      stats.dryRounds++;
+      log(`round ${r}: no paragraph improved (${stats.dryRounds}/${dryStop} dry)`);
+      if (stats.dryRounds >= dryStop) break;
+    } else stats.dryRounds = 0;
   }
   const finalScores = await paraScores(out);
   stats.finalParaMean = Number((finalScores.reduce((a, b) => a + b, 0) / Math.max(1, finalScores.length)).toFixed(3));
