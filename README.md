@@ -4,6 +4,35 @@
 
 **目前版本：7.5**（數字斗篷 Number Cloak ＋ 段級研磨 Grind ＋ LT 安全修復層）
 
+## 快速部署（Windows）
+
+```
+git clone https://github.com/vvvjb18-lab/naturalizer-workflow.git
+cd naturalizer-workflow
+scripts\setup.bat        # 檢查 Node/Python、裝依賴、探測模型服務
+scripts\start-all.cmd    # 啟動 WebUI → http://127.0.0.1:8790
+```
+
+**模型後端（必需，單獨安裝）**：管線透過 `http://127.0.0.1:8080` 呼叫本地 llama.cpp 服務（Humanizer App 或自架 `llama-server -m <12B GGUF>`）。模型權重與 llama.cpp 二進制不入庫（見 `.gitignore`）。
+
+**離線評分（可選，跑 daemon）**：`python polish/detector_daemon.py`（需要 torch 與對應 detector 權重）。
+
+**配置**：`pipeline/v6.config.json`（管線參數）；`polish/polish.config.example.json` → 複製為 `polish.config.json` 並按需填 API key 環境變數（金鑰不入庫）。
+
+**命令行用法**：`node pipeline/v6.mjs <原稿.docx>`，或把原稿拖到 `pipeline/run-pipeline.cmd`。
+
+
+## 倉庫結構
+
+```
+pipeline/   主鏈與候選生成（v6.mjs、candidates.mjs、grind.mjs…）＋ samples
+polish/     LT 修復層、detector daemon/bridge（lt_fix.py、detector_daemon.py）
+webui/      本地 Web 介面（server.mjs → 127.0.0.1:8790）
+scripts/    一鍵部署（setup.bat、start-all.cmd）
+docs/       WORKFLOW.md 完整版更日誌
+evidence/   實測證據包（E2-grind：0% AI／13%／0 flags）
+```
+
 ## 核心組件
 
 | 組件 | 說明 |

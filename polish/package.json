@@ -1,0 +1,14 @@
+{
+  "name": "humanizer-academic-polish",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Post-Humanizer academic repair pass: fixes defects with minimal edits, never rewrites the text.",
+  "scripts": {
+    "test": "node --test test/",
+    "polish": "node polish.mjs"
+  },
+  "dependencies": {
+    "undici": "^8.12.3"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "input": "F:\\Humanizer\\pipeline\\samples\\sample.docx",
+  "docx": true,
+  "a": "F:\\Humanizer\\pipeline\\samples\\docx-demo\\sample.humanized.docx",
+  "aTxt": "F:\\Humanizer\\pipeline\\samples\\docx-demo\\sample.humanized.txt",
+  "b": "F:\\Humanizer\\pipeline\\samples\\docx-demo\\sample.final.docx",
+  "bTxt": "F:\\Humanizer\\pipeline\\samples\\docx-demo\\sample.final.txt",
+  "report": "F:\\Humanizer\\pipeline\\samples\\docx-demo\\sample.final.report.md",
+  "json": "F:\\Humanizer\\pipeline\\samples\\docx-demo\\sample.final.report.json",
+  "paragraphs": 7,
+  "changedParagraphs": 3,
+  "auditOnly": false,
+  "exitCode": 0
+}

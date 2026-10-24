@@ -1,0 +1,13 @@
+Remote Work and Productivity
+
+Recent research indicates that remote work can enhance employee productivity (Smith & Lee, 2021). However, the impact seems to vary based on the type of task and supervisory support.
+
+In a survey of 412 knowledge workers, 68% reported higher focus at home, yet 41% reported difficulty disconnecting after hours.
+
+Method
+
+These results show that productivity gains are conditional rather than universal.
+
+References
+
+Smith, J., & Lee, K. (2021). Remote work and productivity. Journal of Work, 12(3), 45-60.

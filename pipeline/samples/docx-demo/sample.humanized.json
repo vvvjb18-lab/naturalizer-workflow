@@ -1,0 +1,110 @@
+{
+  "hz": "0.1.0",
+  "input": "F:\\Humanizer\\pipeline\\samples\\sample.docx",
+  "output": "F:\\Humanizer\\pipeline\\samples\\docx-demo\\sample.humanized.docx",
+  "format": "docx",
+  "backend": {
+    "kind": "app",
+    "url": "http://127.0.0.1:47615",
+    "model": "q8"
+  },
+  "summary": {
+    "pieces": 3,
+    "retried": 0,
+    "flagged": 0,
+    "seconds": 9.7,
+    "words_in": 56,
+    "words_out": 59,
+    "copy_rate": 0.018
+  },
+  "kept": {
+    "heading": 3,
+    "references": 1
+  },
+  "pieces": [
+    {
+      "id": 1,
+      "kind": "paragraph",
+      "paragraph": 2,
+      "words_in": 25,
+      "words_out": 31,
+      "copy_rate": 0.037,
+      "missing_numbers": [],
+      "missing_urls": [],
+      "added_numbers": [],
+      "truncated": false,
+      "retried": false,
+      "chosen": 1,
+      "seconds": 4.8,
+      "language_resampled": 0,
+      "flagged": false,
+      "issues": [],
+      "attempts": [
+        {
+          "copy_rate": 0.037,
+          "missing_numbers": [],
+          "issues": [],
+          "seconds": 4.8,
+          "language_resampled": 0
+        }
+      ],
+      "draft_start": "Recent studies suggest that remote work may improve employee"
+    },
+    {
+      "id": 2,
+      "kind": "paragraph",
+      "paragraph": 3,
+      "words_in": 20,
+      "words_out": 21,
+      "copy_rate": 0,
+      "missing_numbers": [],
+      "missing_urls": [],
+      "added_numbers": [],
+      "truncated": false,
+      "retried": false,
+      "chosen": 1,
+      "seconds": 3.7,
+      "language_resampled": 0,
+      "flagged": false,
+      "issues": [],
+      "attempts": [
+        {
+          "copy_rate": 0,
+          "missing_numbers": [],
+          "issues": [],
+          "seconds": 3.7,
+          "language_resampled": 0
+        }
+      ],
+      "draft_start": "In a survey of 412 knowledge workers, 68% reported higher fo"
+    },
+    {
+      "id": 3,
+      "kind": "paragraph",
+      "paragraph": 5,
+      "words_in": 11,
+      "words_out": 7,
+      "copy_rate": 0,
+      "missing_numbers": [],
+      "missing_urls": [],
+      "added_numbers": [],
+      "truncated": false,
+      "retried": false,
+      "chosen": 1,
+      "seconds": 1.2,
+      "language_resampled": 0,
+      "flagged": false,
+      "issues": [],
+      "attempts": [
+        {
+          "copy_rate": 0,
+          "missing_numbers": [],
+          "issues": [],
+          "seconds": 1.2,
+          "language_resampled": 0
+        }
+      ],
+      "draft_start": "These findings indicate that productivity gains are conditio"
+    }
+  ]
+}

@@ -1,0 +1,71 @@
+{
+ "target": "balanced",
+ "candidates": 6,
+ "adaptive": true,
+ "adaptiveFirst": 3,
+ "crossover": true,
+ "unitRetries": 2,
+ "grammarThreshold": 0.5,
+ "grammarDamageDrop": 0.3,
+ "surgeryTries": 3,
+ "maxSurgeries": 8,
+ "samplings": [
+  {
+   "temperature": 1.0,
+   "topP": 0.95
+  },
+  {
+   "temperature": 1.0,
+   "topP": 0.95
+  },
+  {
+   "temperature": 1.0,
+   "topP": 0.95
+  },
+  {
+   "temperature": 0.9,
+   "topP": 0.95
+  },
+  {
+   "temperature": 1.1,
+   "topP": 0.95
+  },
+  {
+   "temperature": 1.0,
+   "topP": 0.9
+  }
+ ],
+ "presets": {
+  "balanced": {
+   "_desc": "6.1 實測 29%（<30 可接受）：零語法傷、高品質。預設。",
+   "grammarThreshold": 0.5
+  },
+  "ideal": {
+   "_desc": "衝 <20：H4 實證 damage 0.024 亦可（保護來自節奏非語法傷），地板歸零；上限 0.2 保留。",
+   "grammarThreshold": 0.35,
+   "minGrammarDamage": 0,
+   "maxGrammarDamage": 0.2
+  }
+ },
+ "weights": {
+  "burst": 0.55,
+  "damage": 0.3,
+  "gen": 0.05,
+  "edit": 0.05,
+  "plx": 0.05
+ },
+ "filters": {
+  "minCoverage": 1,
+  "minCvRatio": 1.1,
+  "cvBand": [
+   0.45,
+   0.65
+  ],
+  "maxGrammarDamage": 0.08,
+  "minGrammarDamage": 0,
+  "maxShortSentenceDensity": 0.45,
+  "maxCopyRate": 0.6
+ },
+ "editLensDeltaAdvisory": 0.1,
+ "polishCvRetention": 1.0
+}

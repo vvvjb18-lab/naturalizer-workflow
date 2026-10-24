@@ -1,0 +1,184 @@
+{
+  "generatedAt": "2026-10-23 07:08:19",
+  "input": "humanized.prose.txt",
+  "draft": "original.prose.txt",
+  "model": {
+    "provider": "deepseek",
+    "name": "deepseek-chat",
+    "baseUrl": "https://api.deepseek.com/v1"
+  },
+  "lang": "en",
+  "elapsedMs": 6756,
+  "stats": {
+    "totalWords": 55,
+    "found": 5,
+    "verificationFound": 1,
+    "applied": 4,
+    "rejected": 0,
+    "changedWords": 28,
+    "changedRatio": 0.509090909090909,
+    "modelCount": 5,
+    "machineCount": 1,
+    "cleanupRounds": 1,
+    "cleanupActions": 1,
+    "reverts": 0,
+    "budgetWords": 40
+  },
+  "gates": [
+    {
+      "name": "language",
+      "ok": true,
+      "detail": "en → en"
+    },
+    {
+      "name": "rhythm",
+      "ok": true,
+      "detail": "too short to judge (4 sentences, 55 words); CV 0.314 → 0.172"
+    },
+    {
+      "name": "ai-phrases",
+      "ok": true,
+      "detail": "0 → 0"
+    },
+    {
+      "name": "structure",
+      "ok": true,
+      "detail": "no new lists/headings"
+    },
+    {
+      "name": "numbers",
+      "ok": true,
+      "detail": "all draft numbers present"
+    },
+    {
+      "name": "citations",
+      "ok": true,
+      "detail": "all draft citations present"
+    },
+    {
+      "name": "edit-budget",
+      "ok": true,
+      "detail": "28 words replaced (limit 40; 50.9% of text)"
+    },
+    {
+      "name": "duplicates",
+      "ok": true,
+      "detail": "0 → 0"
+    },
+    {
+      "name": "truncation",
+      "ok": true,
+      "detail": "ends complete"
+    },
+    {
+      "name": "register",
+      "ok": true,
+      "detail": "you/your 0→0, contractions 0→0"
+    }
+  ],
+  "metrics": {
+    "before": {
+      "lang": "en",
+      "words": 55,
+      "han": 0,
+      "latinWords": 55,
+      "paragraphs": 3,
+      "sentences": 4,
+      "n": 4,
+      "mean": 13.75,
+      "sd": 4.323,
+      "cv": 0.314,
+      "min": 7,
+      "max": 18,
+      "shortRatio": 0.25,
+      "longRatio": 0,
+      "aiPhrases": 0,
+      "colloquial": 0,
+      "contractions": 0,
+      "secondPerson": 0,
+      "questions": 0,
+      "hedges": 2,
+      "structure": 0,
+      "numbers": 3,
+      "citations": 1
+    },
+    "after": {
+      "lang": "en",
+      "words": 53,
+      "han": 0,
+      "latinWords": 53,
+      "paragraphs": 3,
+      "sentences": 4,
+      "n": 4,
+      "mean": 13.25,
+      "sd": 2.278,
+      "cv": 0.172,
+      "min": 11,
+      "max": 17,
+      "shortRatio": 0,
+      "longRatio": 0,
+      "aiPhrases": 0,
+      "colloquial": 0,
+      "contractions": 0,
+      "secondPerson": 0,
+      "questions": 0,
+      "hedges": 3,
+      "structure": 0,
+      "numbers": 3,
+      "citations": 1
+    }
+  },
+  "texts": {
+    "original": "Recent studies suggest that remote work may improve employee productivity (Smith & Lee, 2021). However, the effect appears to depend on task type and supervisory support.\n\nIn a survey of 412 knowledge workers, 68% reported higher focus at home, yet 41% reported difficulty disconnecting after hours.\n\nThese findings indicate that productivity gains are conditional rather than universal.",
+    "humanized": "According to recent research, working from home could boost employee productivity (Smith & Lee, 2021). But the results seem to vary based on the type of work and the level of supervision.\n\n412 knowledge workers surveyed: 68% more focused working from home but 41% of people struggle to switch off after work hours.\n\nIt shows that productivity improvements are contingent.",
+    "output": "According to recent research, working from home could boost employee productivity (Smith & Lee, 2021). However, the effect appears to depend on task type and supervisory support.\n\nIn a survey of 412 knowledge workers, 68% reported higher focus at home, yet 41% reported difficulty disconnecting after hours.\n\nThese findings indicate that productivity gains are conditional rather than universal."
+  },
+  "patches": [
+    {
+      "id": "C1",
+      "type": "register",
+      "severity": "major",
+      "before": "But the results seem to vary based on the type of work and the level of supervision.",
+      "after": "However, the effect appears to depend on task type and supervisory support.",
+      "note": "Replaced conversational opening and vague wording with DRAFT A's formal connective and precise terminology (also addresses M4).",
+      "chunk": 1
+    },
+    {
+      "id": "M1",
+      "type": "grammar",
+      "severity": "critical",
+      "before": "412 knowledge workers surveyed: 68% more focused working from home but 41% of people struggle to switch off after work hours.",
+      "after": "In a survey of 412 knowledge workers, 68% reported higher focus at home, but 41% reported difficulty switching off after work hours.",
+      "note": "Converted fragment into a grammatical sentence with main verbs.",
+      "chunk": 1
+    },
+    {
+      "id": "M2",
+      "type": "meaning",
+      "severity": "major",
+      "before": "It shows that productivity improvements are contingent.",
+      "after": "These findings indicate that productivity gains are conditional rather than universal.",
+      "note": "Restored the conditional-versus-universal contrast and clear antecedent (also addresses M3).",
+      "chunk": 1
+    },
+    {
+      "id": "M1",
+      "type": "terminology",
+      "severity": "minor",
+      "before": "but 41% reported difficulty switching off after work hours",
+      "after": "yet 41% reported difficulty disconnecting after hours",
+      "note": "Restores the author's precise term \"disconnecting\" and original phrasing \"after hours\" as a minimal local replacement, keeping the surrounding sentence intact.",
+      "chunk": 1
+    }
+  ],
+  "unresolved": [],
+  "manual": [],
+  "errors": [],
+  "context": {
+    "missingNumbers": [],
+    "extraNumbers": [],
+    "missingCitations": [],
+    "extraCitations": [],
+    "hedgeNote": null
+  }
+}

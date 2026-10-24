@@ -1,0 +1,189 @@
+{
+  "generatedAt": "2026-10-23 20:46:50",
+  "input": "humanized.prose.txt",
+  "draft": "original.prose.txt",
+  "model": {
+    "provider": "deepseek",
+    "name": "deepseek-chat",
+    "baseUrl": "https://api.deepseek.com/v1"
+  },
+  "lang": "en",
+  "elapsedMs": 55754,
+  "stats": {
+    "totalWords": 59,
+    "found": 8,
+    "verificationFound": 3,
+    "applied": 4,
+    "rejected": 2,
+    "changedWords": 27,
+    "changedRatio": 0.4576271186440678,
+    "modelCount": 8,
+    "machineCount": 1,
+    "cleanupRounds": 2,
+    "cleanupActions": 2,
+    "rewrites": 1,
+    "hzRewrites": 1,
+    "judgePass": 1,
+    "judgeFail": 6,
+    "judgeSkipped": 0,
+    "forced": 0,
+    "budgetWords": 40
+  },
+  "gates": [
+    {
+      "name": "language",
+      "ok": true,
+      "detail": "en → en"
+    },
+    {
+      "name": "rhythm",
+      "ok": true,
+      "detail": "too short to judge (3 sentences, 59 words); CV 0.386 → 0.173"
+    },
+    {
+      "name": "ai-phrases",
+      "ok": true,
+      "detail": "0 → 0"
+    },
+    {
+      "name": "structure",
+      "ok": true,
+      "detail": "no new lists/headings"
+    },
+    {
+      "name": "numbers",
+      "ok": true,
+      "detail": "all draft numbers present"
+    },
+    {
+      "name": "citations",
+      "ok": true,
+      "detail": "all draft citations present"
+    },
+    {
+      "name": "edit-budget",
+      "ok": true,
+      "detail": "27 words replaced (limit 40; 45.8% of text)"
+    },
+    {
+      "name": "duplicates",
+      "ok": true,
+      "detail": "0 → 0"
+    },
+    {
+      "name": "truncation",
+      "ok": true,
+      "detail": "ends complete"
+    },
+    {
+      "name": "register",
+      "ok": true,
+      "detail": "you/your 0→0, contractions 0→0"
+    }
+  ],
+  "metrics": {
+    "before": {
+      "lang": "en",
+      "words": 59,
+      "han": 0,
+      "latinWords": 59,
+      "paragraphs": 3,
+      "sentences": 3,
+      "n": 3,
+      "mean": 19.667,
+      "sd": 7.587,
+      "cv": 0.386,
+      "min": 12,
+      "max": 30,
+      "shortRatio": 0,
+      "longRatio": 0,
+      "aiPhrases": 0,
+      "colloquial": 0,
+      "contractions": 0,
+      "secondPerson": 0,
+      "questions": 0,
+      "hedges": 2,
+      "structure": 0,
+      "numbers": 3,
+      "citations": 1
+    },
+    "after": {
+      "lang": "en",
+      "words": 55,
+      "han": 0,
+      "latinWords": 55,
+      "paragraphs": 3,
+      "sentences": 4,
+      "n": 4,
+      "mean": 13.75,
+      "sd": 2.385,
+      "cv": 0.173,
+      "min": 11,
+      "max": 17,
+      "shortRatio": 0,
+      "longRatio": 0,
+      "aiPhrases": 0,
+      "colloquial": 0,
+      "contractions": 0,
+      "secondPerson": 0,
+      "questions": 0,
+      "hedges": 2,
+      "structure": 0,
+      "numbers": 3,
+      "citations": 1
+    }
+  },
+  "texts": {
+    "original": "Recent studies suggest that remote work may improve employee productivity (Smith & Lee, 2021). However, the effect appears to depend on task type and supervisory support.\n\nIn a survey of 412 knowledge workers, 68% reported higher focus at home, yet 41% reported difficulty disconnecting after hours.\n\nThese findings indicate that productivity gains are conditional rather than universal.",
+    "humanized": "Recent research indicates that remote work can enhance employee productivity (Smith & Lee, 2021). But the impact seems to vary based on the type of task and the availability of supervision.\n\n412 knowledge workers surveyed: 68% experienced improved concentration working from home 41% found it challenging to \"turn off\" after work\n\nWhich shows that the increases in productivity are not necessarily true for all.",
+    "output": "Recent research indicates that remote work can enhance employee productivity (Smith & Lee, 2021). However, the impact seems to vary based on the type of task and supervisory support.\n\nIn a survey of 412 knowledge workers, 68% reported higher focus at home, yet 41% reported difficulty disconnecting after hours.\n\nThese results show that productivity gains are conditional rather than universal."
+  },
+  "patches": [
+    {
+      "id": "C1",
+      "type": "register",
+      "severity": "major",
+      "before": "But the impact seems to vary based on the type of task and the availability of supervision.",
+      "after": "However, the impact seems to vary based on the type of task and supervisory support.",
+      "note": "Replaced the conversational opening with a formal connective; also fixes M7 within the same span.",
+      "chunk": 1
+    },
+    {
+      "id": "M1",
+      "type": "structure",
+      "severity": "critical",
+      "before": "412 knowledge workers surveyed: 68% experienced improved concentration working from home 41% found it challenging to \"turn off\" after work",
+      "after": "In a survey of 412 knowledge workers, 68% reported higher focus at home, yet 41% reported difficulty disconnecting after hours.",
+      "note": "Restored a complete sentence with finite main clause and joined the two statistics with a conjunction; also fixes M5 and M6 within the same span.",
+      "chunk": 1
+    },
+    {
+      "id": "M1",
+      "type": "rewrite",
+      "severity": "critical",
+      "before": "Which shows that the increases in productivity are not necessarily true for all.",
+      "after": "These results show the conditionality of productivity increases.",
+      "note": "hz 重新生成第 3 次（保留原稿事實） · judge 24/25",
+      "chunk": 1
+    },
+    {
+      "id": "M1",
+      "type": "terminology",
+      "severity": "major",
+      "before": "These results show the conditionality of productivity increases.",
+      "after": "These results show that productivity gains are conditional rather than universal.",
+      "note": "Restores the author's precise contrast ('conditional rather than universal') and the exact term 'productivity gains' while maintaining the voice and verb from B.",
+      "chunk": 1
+    }
+  ],
+  "unresolved": [],
+  "manual": [],
+  "errors": [],
+  "context": {
+    "missingNumbers": [],
+    "extraNumbers": [],
+    "missingCitations": [],
+    "extraCitations": [],
+    "hedgeNote": null
+  }
+}

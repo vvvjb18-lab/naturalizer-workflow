@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Humanizer</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <span class="mark">HZ</span>
+      <div>
+        <h1>Humanizer</h1>
+        <p>把稿件整理成更自然、更流暢的學術文字。</p>
+      </div>
+    </div>
+    <div class="badges ambient">
+      <span id="version"></span>
+    </div>
+  </header>
+
+  <p class="privacy">🔒 檔案只留在這部電腦，不會上傳</p>
+
+  <main class="wrap">
+    <section class="card">
+      <h2 class="section-q">① 選一種做法</h2>
+
+      <div class="mode-row" role="tablist">
+        <label class="mode selected"><input type="radio" name="mode" value="v6" checked>
+          <span class="m-title">精修 <em class="rec">推薦</em></span>
+          <span class="m-desc">產生數個版本 → 選最好的 → 逐句修語法</span>
+          <span class="m-desc dim">約 15–25 分鐘 · 適合：要交的稿件</span>
+        </label>
+        <label class="mode"><input type="radio" name="mode" value="classic">
+          <span class="m-title">快速</span>
+          <span class="m-desc">改一次就完成，可自行微調設定</span>
+          <span class="m-desc dim">約 10 分鐘 · 適合：想先看效果</span>
+        </label>
+      </div>
+
+      <div id="v6Options">
+        <label class="check">
+          <input id="lowAi" type="checkbox">
+          <span>盡量壓低 AI 味（成品會保留輕微口語感，需時較長）</span>
+        </label>
+      </div>
+
+      <div id="classicOptions" hidden>
+        <label class="check" id="hasAWrap">
+          <input id="hasA" type="checkbox">
+          <span>我已有 Humanizer 輸出（跳過 hz，只跑修補）</span>
+        </label>
+        <div id="aWrap" hidden>
+          <label for="humanized" class="block-label">Humanizer 輸出（A）</label>
+          <textarea id="humanized" rows="8" spellcheck="false"
+            placeholder="貼上 hz 的輸出…"></textarea>
+        </div>
+        <div class="options">
+          <label>驗證輪
+            <select id="verify">
+              <option value="audit" selected>audit · 只審查（建議）</option>
+              <option value="repair">repair · 自動再修</option>
+              <option value="off">off · 不驗證</option>
+            </select>
+          </label>
+          <label>語言
+            <select id="lang">
+              <option value="auto" selected>自動</option>
+              <option value="en">English</option>
+              <option value="zh">中文</option>
+            </select>
+          </label>
+          <label class="check inline">
+            <input id="auditOnly" type="checkbox">
+            <span>只審查，不改稿</span>
+          </label>
+        </div>
+      </div>
+
+      <h2 class="section-q">② 放進你的稿件</h2>
+      <div class="label-row">
+        <label for="original" class="hint">.txt / .md / .docx</label>
+        <button id="pick" class="ghost small" type="button">選擇檔案</button>
+      </div>
+      <textarea id="original" rows="9" spellcheck="false"
+        placeholder="貼上文字，或把 .txt / .md / .docx 拖進來"></textarea>
+      <input id="file" type="file" accept=".txt,.md,.docx,text/plain" hidden>
+      <div id="fileChip" class="filechip" hidden>
+        <span class="chipmark">DOCX</span>
+        <span id="fileName" class="name"></span>
+        <button id="fileClear" class="ghost small" type="button">移除</button>
+      </div>
+
+      <div class="run-row">
+        <button id="run" class="primary" type="button">開始整理</button>
+        <button id="clear" class="ghost" type="button">清空</button>
+      </div>
+
+      <div class="promise">
+        <span class="promise-t">完成後你會拿到</span>
+        <span class="promise-i">· 修訂稿（.docx）</span>
+        <span class="promise-i">· 品質檢查表：語句節奏 / 文法 / 引用格式 / 論點清晰度</span>
+      </div>
+
+      <div id="error" class="error" hidden></div>
+    </section>
+
+    <section class="card" id="progress" hidden>
+      <div class="progress-head">
+        <span id="progressTitle">進行中</span>
+        <span id="progressStep" class="dim"></span>
+      </div>
+      <div class="steps" id="steps" aria-label="進度"></div>
+      <details class="logbox">
+        <summary>詳細紀錄 <span id="logCount"></span></summary>
+        <pre id="log"></pre>
+      </details>
+    </section>
+
+    <section id="results" hidden>
+      <div id="summary" class="summary"></div>
+
+      <section class="card" id="unresolvedCard" hidden>
+        <h2>需要你留意的句子</h2>
+        <div id="unresolved" class="issues"></div>
+      </section>
+
+      <section class="card" id="riskCard" hidden>
+        <div class="label-row">
+          <h2>品質檢查表</h2>
+          <div class="tools">
+            <a id="dlRisk" class="ghost small" hidden download>下載檢查表</a>
+          </div>
+        </div>
+        <div id="riskChips" class="chips"></div>
+        <details id="riskTableWrap" class="tablewrap">
+          <summary>各版本對照（技術細節）</summary>
+          <table id="riskTable"></table>
+        </details>
+        <p class="hint">檢查表反映文字品質，不對任何第三方檢測分數作出保證。</p>
+      </section>
+
+      <section class="card">
+        <div class="label-row">
+          <h2>對照</h2>
+          <div class="tools">
+            <label class="check inline"><input id="diff" type="checkbox" checked><span>標示差異</span></label>
+            <button id="copyB" class="ghost small" type="button">複製修訂稿</button>
+            <a id="dlADocx" class="ghost small" hidden download>下載初稿 .docx</a>
+            <a id="dlBDocx" class="ghost small" hidden download>下載修訂稿 .docx</a>
+            <button id="dlA" class="ghost small" type="button">下載初稿</button>
+            <button id="dlB" class="ghost small" type="button">下載修訂稿</button>
+            <button id="dlR" class="ghost small" type="button">下載報告</button>
+          </div>
+        </div>
+        <p id="docxNote" class="hint" hidden></p>
+        <p class="hint">原文的紅色 = 被改掉；綠色 = 新的寫法。段落重排是正常的，重點看數字、引用與列表。</p>
+        <div class="panes">
+          <div class="pane-col">
+            <h3>原文</h3>
+            <pre id="paneOriginal" class="pane"></pre>
+          </div>
+          <div class="pane-col">
+            <h3>初稿（改寫）</h3>
+            <pre id="paneA" class="pane"></pre>
+          </div>
+          <div class="pane-col">
+            <h3>修訂稿</h3>
+            <pre id="paneB" class="pane"></pre>
+          </div>
+        </div>
+      </section>
+
+      <details class="card reportbox" open>
+        <summary>完整報告（Markdown）</summary>
+        <pre id="report"></pre>
+      </details>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
