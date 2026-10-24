@@ -1,0 +1,15 @@
+{
+  "measuredAt": "2026-10-24 (daemon re-verified at evidence packaging time)",
+  "detector": "tmr-ai-text-detector(RAID) / EditLens / GPT-2 ppl, same daemon as pipeline",
+  "original": {"p_ai_gen": 0.240, "p_ai_edit": 0.148, "ppl": 21.7, "cv": 0.374, "sentences": 17, "words": 419},
+  "A_v6_crossoverX": {"p_ai_gen": 0.175, "p_ai_edit": 0.145, "ppl": 25.6, "cv": 0.567, "sentences": 24, "words": 487},
+  "B_grind": {"p_ai_gen": 0.030, "p_ai_edit": 0.146, "ppl": 30.5, "cv": 0.621, "sentences": 27, "words": 542},
+  "deltas": {
+    "editLens_A_to_B": 0.001,
+    "editLens_advisory_threshold": 0.1,
+    "cv_retention_B_over_A": 1.095,
+    "cv_retention_B_over_original": 1.66,
+    "note": "grind 由本機 hz 段級重生構成（無 API 參與），EditLens 無 AI 修訂訊號；CV 不降反升，節奏未被磨平"
+  },
+  "turnitin": {"ai": "0%", "similarity": "13%", "integrity_flags": 0, "code": "F20A277274", "submittedAt": "2026-10-24 13:31", "submissionId": "trn:oid:::26334:304157451"}
+}

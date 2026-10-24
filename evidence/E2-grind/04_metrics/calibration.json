@@ -1,0 +1,232 @@
+{
+ "note": "Turnitin 校準集——每筆 = 一次真實提交。CV=句長變異係數(純正文)。band 觀察: 通過者 CV 0.414/0.644；平滑(<原稿0.393)或帶 AI-revision delta 者失敗。",
+ "points": [
+  {
+   "name": "original",
+   "turnitin": "~100(presumed)",
+   "cv": 0.393,
+   "shortRatio": 0.1,
+   "sentences": 29,
+   "words": 592,
+   "p_ai_gen": 0.559,
+   "p_ai_edit": 0.147,
+   "ppl": 25.5,
+   "coverage": 0.2,
+   "note": "純 AI 原稿（5段只humanize 4段的2.0也算覆蓋不足）"
+  },
+  {
+   "name": "final2.0",
+   "turnitin": "59",
+   "cv": 0.41,
+   "shortRatio": 0.03,
+   "sentences": 29,
+   "words": 647,
+   "p_ai_gen": 0.255,
+   "p_ai_edit": 0.147,
+   "ppl": 28.2,
+   "coverage": 0.8,
+   "note": "第1段未humanize（覆蓋率不足）"
+  },
+  {
+   "name": "final3.0",
+   "turnitin": "<20",
+   "cv": 0.644,
+   "shortRatio": 0.29,
+   "sentences": 49,
+   "words": 817,
+   "p_ai_gen": 0.151,
+   "p_ai_edit": 0.148,
+   "ppl": 37.8,
+   "coverage": 1,
+   "note": "碎片多、節奏極不均；Turnitin 過但品質被退"
+  },
+  {
+   "name": "final5.0",
+   "turnitin": "<20",
+   "cv": 0.414,
+   "shortRatio": 0.06,
+   "sentences": 35,
+   "words": 654,
+   "p_ai_gen": 0.046,
+   "p_ai_edit": 0.148,
+   "ppl": 27.4,
+   "coverage": 1,
+   "note": "alt1+AUTO修補；唯一同時過 Turnitin 與品質"
+  },
+  {
+   "name": "final5.1",
+   "turnitin": "25",
+   "cv": 0.538,
+   "shortRatio": 0.25,
+   "sentences": 57,
+   "words": 794,
+   "p_ai_gen": 0.375,
+   "p_ai_edit": 0.24,
+   "ppl": 22.3,
+   "coverage": 1,
+   "note": "EditLens delta +0.09（AI 修訂味）"
+  },
+  {
+   "name": "final6.0",
+   "turnitin": "56",
+   "cv": 0.39,
+   "shortRatio": 0.09,
+   "sentences": 34,
+   "words": 631,
+   "p_ai_gen": 0.058,
+   "p_ai_edit": 0.145,
+   "ppl": 23.9,
+   "coverage": 1,
+   "note": "cand4：CV 比原稿(0.393)還平滑；選擇器選了最平滑的候選"
+  },
+  {
+   "name": "A1計劃 40a (終修版)",
+   "turnitin": "40",
+   "cv": 0.756,
+   "proseCv": 0.349,
+   "p_ai_gen": 0.975,
+   "ppl": 9.9,
+   "words": 1024,
+   "note": "潤飾版（終修）",
+   "processing": "GPT 生成 → Humanizer → (V2: 輕微減錯；V3/V7/終修版: 再潤飾)"
+  },
+  {
+   "name": "A1計劃 40b Template(2)",
+   "turnitin": "40",
+   "cv": 0.726,
+   "proseCv": 0.341,
+   "p_ai_gen": 0.746,
+   "ppl": 14.6,
+   "words": 921,
+   "note": "潤飾版",
+   "processing": "GPT 生成 → Humanizer → (V2: 輕微減錯；V3/V7/終修版: 再潤飾)"
+  },
+  {
+   "name": "A1計劃 V3",
+   "turnitin": "24",
+   "cv": 0.795,
+   "proseCv": 0.418,
+   "p_ai_gen": 0.73,
+   "ppl": 14.5,
+   "words": 889,
+   "note": "V2 的潤飾版（related with→associated with、碎片hook修完整）",
+   "processing": "GPT 生成 → Humanizer → (V2: 輕微減錯；V3/V7/終修版: 再潤飾)"
+  },
+  {
+   "name": "A1計劃 V2",
+   "turnitin": "0",
+   "cv": 0.726,
+   "proseCv": 0.405,
+   "p_ai_gen": 0.959,
+   "ppl": 14.4,
+   "words": 938,
+   "note": "粗糙版：碎片hook、related with、重複片語、you縮寫；tmr 誤判 0.959 最高但 Turnitin 給 0%",
+   "processing": "GPT 生成 → Humanizer → (V2: 輕微減錯；V3/V7/終修版: 再潤飾)"
+  },
+  {
+   "name": "A1計劃 V7",
+   "turnitin": "31",
+   "cv": 0.846,
+   "proseCv": 0.424,
+   "p_ai_gen": 0.98,
+   "ppl": 12.7,
+   "words": 813,
+   "note": "後續版本，再度潤飾後回升",
+   "processing": "GPT 生成 → Humanizer → (V2: 輕微減錯；V3/V7/終修版: 再潤飾)"
+  },
+  {
+   "name": "final6.1",
+   "turnitin": "29",
+   "cv": 0.504,
+   "cvRatio": 1.28,
+   "colaDamage": 0.0,
+   "edgeSents": 2,
+   "p_ai_gen": 0.249,
+   "ppl": 26.9,
+   "words": 658,
+   "coverage": 1,
+   "note": "6.1 全鏈：CV 帶內、零語法傷、delta+0.002 → 29%，**用戶判定可接受（<30）**；6.1 成為預設操作點"
+  },
+  {
+   "name": "H2_ideal (evolve seed14)",
+   "turnitin": "<20 (not surfaced)",
+   "cv": 0.534,
+   "cvRatio": 1.36,
+   "colaDamage": 0.059,
+   "surgeries": 7,
+   "p_ai_gen": 0.031,
+   "p_ai_edit": 0.148,
+   "ppl": 36.2,
+   "words": 676,
+   "coverage": 1,
+   "pipeline": "hz(temp1.05/topP0.95) + surgery + selection; NO API polish",
+   "note": "第13點：damage 0.05-0.06 + CV 0.53 + 零API潤飾 → <20%（報告不顯示數字）。ideal 假設驗證成立：殘留粗糙度是保護層。p_ai_gen 0.031 為全數據集最低。"
+  },
+  {
+   "name": "H4_prodLT (production A + LT)",
+   "turnitin": "<20 (not surfaced)",
+   "cv": 0.498,
+   "cvRatio": 1.27,
+   "colaDamage": 0.024,
+   "ltFixes": 5,
+   "p_ai_gen": 0.048,
+   "p_ai_edit": 0.148,
+   "ppl": 27.9,
+   "words": 710,
+   "coverage": 1,
+   "pipeline": "v6 7.1 selection+surgery+mechanical + LT layer (7.3); NO API polish",
+   "note": "第14點：生產管線配方首次全鏈 <20%。品質明顯優於 H2（i/I、has/have、payed 等已修），偵測特徵不變。核心目標「低AI+高品質」在參考文章成立。"
+  },
+  {
+   "name": "E2-grind (X + grind)",
+   "turnitin": "0 AI / 13 similarity / 0 flags",
+   "cv": 0.621,
+   "cvRatio": 1.66,
+   "colaDamage": 0.0,
+   "p_ai_gen": 0.03,
+   "p_ai_edit": 0.146,
+   "ppl": 30.5,
+   "words": 534,
+   "coverage": 1,
+   "pipeline": "v6 ideal (6 cands, word-number cloak) -> crossover X (gen 0.175) -> grind.mjs paragraph-level regen with NLI gate -> docx",
+   "note": "第17點（2026-10-24 13:31，碼 F20A277274）：紅區（正式議論文+引用+統計）首次 0% AI。離線 gen 0.030 <-> Turnitin 0%，檔位規律與 H2(0.031<20%)/H4(0.048<20%) 一致。查重 13%（9%網路+4%出版物，糖稅主題常見來源；學生論文 0%）。0 integrity flags：數字斗篷與研磨無操縱指紋。"
+  }
+ ],
+ "lessons": [
+  "tmr/EditLens/perplexity 無法解釋 5.0(<20) vs 6.0(56%)——離線偵測器在 hz 輸出之間失去鑑別力",
+  "CV(burstiness) 是目前最強的 Turnitin 預測因子：通過 0.414/0.644；比原稿平滑=高危",
+  "hz 的平滑候選(語法好)與爆裂候選(Turnitin 抗性)反相關；通過者是中間的偶然抽樣，選擇器必須往 CV 帶(約0.45-0.65)裡選",
+  "覆蓋率不足(2.0)與 AI 修訂 delta(5.1)是另外兩個已證實的失敗模式",
+  "第二文件族（A1 計劃書/模板表格）：CV、prose-CV、tmr、perplexity、EditLens 全部失去鑑別力（V2 0% 的 tmr=0.959 最高卻過；V7 31% 的 CV=0.846 最高）",
+  "V2(0%) vs V3(24%) 十一分鐘對照組隔離出單一變量：散文潤飾度。粗糙版（碎片、錯介詞、重複、縮寫）→ 0%；潤飾版 → 24%",
+  "跨兩個文件族、11 個點的一致定律：潤飾度 ↑ → Turnitin ↑。交付甜點 = 語法安全但保留可見的人類不完美",
+  "模板/表格類文件的正確策略：幾乎不 polish（只檢查引用數字），保留最粗糙的可交付版本；句子指標被模板結構遮蔽，不可用",
+  "加工履歷確認：A1 計劃書族全部是 GPT 草稿 + Humanizer 產出。V2(0%) = hz 後只做輕微減錯；V3(24%)/V7(31%)/終修版(40%) = hz 後再做較多潤飾。同一生成器、同一 humanizer，唯一變量是事後潤飾量——「GPT → hz → 只修錯」配方在第二文件族拿到 0%。",
+  "final6.1(29%) 否證「指標全綠=通過」但 29% 落在用戶可接受區（<30 可交、<20 理想）：CoLA 傷率梯度 3.0=0.245/5.0=0.086 → <20；6.1=0.000 → 29%。營運結論：**balanced（6.1 現狀：零傷、高品質、~29%）為預設**；**ideal 模式（衝 <20）才需要傷率帶**：手術門檻 0.35、保留 0.05–0.2 殘餘傷與邊緣句——未經 Turnitin 驗證，僅供需要 <20 的訂單",
+  {
+   "id": 13,
+   "lesson": "純 hz 管線（無 API 潤飾）+ 7 次手術後 damage 0.059 → Turnitin <20%。對比 final6.1（零 damage + API 潤飾）= 29%：潤飾度每升一級，Turnitin 大約升 10-15%。要在 20% 以下，API 潤飾必須極輕或完全不用，靠 hz 手術把語法傷停在 0.05-0.15 帶內。"
+  },
+  {
+   "id": 14,
+   "lesson": "LT 確定性語法層不改變 Turnitin 結果（H4 <20% 複現 H2）。兩次 <20% 的共同配方：hz 多候選擇優 + 手術 + 零 API 潤飾；damage 只要 0.02-0.06 也可通過——保護來自節奏（CV 帶內）與低 p_ai_gen，不是語法錯誤本身。"
+  },
+  {
+   "id": 15,
+   "lesson": "類型邊界：數據密度是共同死因。無數字的反思文 <20%×2；統計/引用密集文（E2/R3）倒在數字保留；label 型（F1）hz 負優化。數字斗篷（ZXQ 佔位符）是數據型的解法（5/5 探針存活）。中文：hz 能力 OK 但 turnitai 無中文 AI 檢測。"
+  },
+  {
+   "id": 16,
+   "lesson": "類型邊界的真實維度是語域：個人敘事/反思＝綠區（gen 0.03-0.12 可達）；正式第三人稱（議論文/報告）＝紅區（hz 後 gen 0.28-0.92）。數字斗篷破覆蓋牆（R3 75%→100%）但破不了語域牆。E2 教訓：序數詞（twenty-first）要進 cloak 詞表；ideal 的 minGrammarDamage 0.05 地板已被 H4(damage 0.024 <20%) 推翻，歸零。"
+  },
+  {
+   "id": 17,
+   "lesson": "紅區不是死牆：選擇式管線（6 候選+段落重組 X）把 E2 從原稿 0.963 壓到 0.175，段級研磨（grind.mjs，NLI 守門+數字斗篷）再壓到 0.030，Turnitin 實測 0% AI／13% 查重／0 integrity flags。研磨逐段分數是膨脹尺度（0.8-0.98），只做相對比較，驗收回整份；正式語域段（R3 p2 類）多數嘗試 no gain，是研磨天花板。"
+  }
+ ],
+ "acceptance": {
+  "acceptable": "<30",
+  "ideal": "<20",
+  "decidedBy": "user 2026-10-24"
+ }
+}

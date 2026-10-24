@@ -1,0 +1,27 @@
+12:55:19 === E2-grind start (candX gen 0.175, gain 0.02, 3 rounds, NLI gate) ===
+round 1: worst = p5(0.98) p3(0.98) p6(0.98)
+  p5: attempt 1 failed validation
+  p5: attempt 2 no gain (0.981)
+  p5: attempt 3 no gain (0.977)
+  p3: 0.981 -> 0.911 ✓
+  p6: 0.981 -> 0.956 ✓
+round 2: worst = p5(0.98) p2(0.98) p4(0.98)
+  p5: attempt 1 no gain (0.984)
+  p5: attempt 2 failed validation
+  p5: 0.981 -> 0.958 ✓
+  p2: attempt 1 failed validation
+  p2: 0.977 -> 0.050 ✓
+  p4: 0.977 -> 0.664 ✓
+round 3: worst = p5(0.96) p6(0.96) p3(0.91)
+  p5: attempt 1 no gain (0.961)
+  p5: attempt 2 no gain (0.970)
+  p5: attempt 3 no gain (0.982)
+  p6: attempt 1 no gain (0.982)
+  p6: attempt 2 no gain (0.978)
+  p6: 0.956 -> 0.127 ✓
+  p3: attempt 1 failed validation
+  p3: attempt 2 no gain (0.911)
+  p3: 0.911 -> 0.740 ✓
+final paragraph scores: 0.96 0.05 0.74 0.66 0.96 0.13 mean=0.583
+-> E:/download/wf7.2-typetest/E2-final2/.v6-E2_argument_essay/candX.grind.prose.txt
+13:05:26 === E2-grind exit=0 ===
