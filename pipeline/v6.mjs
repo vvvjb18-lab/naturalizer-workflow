@@ -534,13 +534,34 @@ async function main() {
       console.log(`=== 5.5/7 段級研磨：gen ${fmt(chosen.score?.p_ai_gen)} 已 ≤ 門檻 ${gc.genGate}，跳過 ===`);
       grindInfo = { action: 'skipped', reason: `gen ${fmt(chosen.score?.p_ai_gen)} ≤ gate ${gc.genGate}` };
     } else {
-      console.log(`=== 5.5/7 段級研磨（gen ${fmt(chosen.score?.p_ai_gen)} > ${gc.genGate}，最多 ${gc.rounds} 輪 × worst-${gc.worst}，NLI 守門）===`);
+      // 8.4: extreme document family (original ≈ pure LM, gen > 0.8) —
+      // escalate grind rounds and rebuild sentence-length structure first.
+      const extreme = (chosen.score?.p_ai_gen ?? 0) > 0.8;
+      const roundsN = extreme ? (cfg.grind?.roundsExtreme ?? 8) : gc.rounds;
+      const bandLo = (cfg.filters?.cvBand?.[0] ?? 0.45) * 0.9;
+      console.log(`=== 5.5/7 段級研磨（gen ${fmt(chosen.score?.p_ai_gen)} > ${gc.genGate}${extreme ? '，極端文檔：8 輪＋句級降級' : ''}，NLI 守門）===`);
+      if (extreme && chosen.stats?.cv > 0 && chosen.stats.cv < bandLo) {
+        console.log(`  8.4 攻堅：CV ${fmt(chosen.stats.cv, 3)} 低於帶——先結構重造（burstiness）`);
+        const { moves } = await burstifyCandidate({
+          c: chosen, originalsByPara, targetIdx, lang,
+          rounds: cfg.lowCvFallback?.rounds ?? 3, worst: cfg.lowCvFallback?.worst ?? 4,
+          log: (m) => console.log(`  ${m}`),
+        });
+        chosen.prose = targetIdx.map((i) => chosen.paras[i]).filter(Boolean).join('\n\n');
+        const stB = candidateStats({ originalProse, prose: chosen.prose, lang });
+        stB.coverage = chosen.stats.coverage;
+        chosen.stats = stB;
+        chosen.grammarDamage = await damageOf(chosen.prose);
+        const [scB] = await scoreTexts([chosen.prose]);
+        if (scB) chosen.score = { ...chosen.score, ...scB };
+        console.log(`  結構重造後：CV ${fmt(stB.cv, 3)} gen ${fmt(chosen.score?.p_ai_gen)}（${moves.length} 段）`);
+      }
       const idxList = targetIdx;
       const origParas = idxList.map((i) => originalsByPara[i] || '');
       const parasIn = idxList.map((i) => chosen.paras[i] || originalsByPara[i] || '');
       const { paras: ground, stats: gstats } = await grindParas({
         origParas, paras: parasIn, lang,
-        rounds: gc.rounds, worst: gc.worst, gain: gc.gain,
+        rounds: roundsN, worst: gc.worst, gain: gc.gain,
         log: (m) => console.log(`  ${m}`),
       });
       const newProse = ground.join('\n\n');

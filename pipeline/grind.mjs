@@ -17,6 +17,60 @@ import { scoreTexts, closeDetector } from './detector_client.mjs';
 
 const DEFAULT_TEMPS = [1.0, 1.15, 0.9, 1.05];
 
+// ── 8.4: sentence-mode fallback ─────────────────────────────────────────────
+// Paragraph regen of hyper-LM prose at grind temps frequently shatters
+// grammar (12/28 broken sentences). Sentence mode walks the paragraph one
+// sentence at a time: regen the most AI-flavored (highest per-sentence tmr)
+// sentences individually, accept only strict improvements, verify the whole
+// paragraph against the original once at the end.
+async function sentenceModeRegen({ paras, idx, origParas, lang = 'en', maxSents = 5, log = () => {} }) {
+  const { wordCount: wc } = await import('../polish/src/text.mjs');
+  const backup = paras[idx];
+  const sents = splitSentences(paras[idx], lang);
+  if (sents.length < 3) return false;
+  const grams = await grammarScores(sents.map((s) => s.text));
+  const tmrs = await scoreTexts(sents.map((s) => s.text));
+  const targets = sents
+    .map((s, i) => ({ s, i, gram: grams[i], tmr: tmrs[i]?.p_ai_gen ?? 1 }))
+    .filter((x) => wc(x.s.text, lang) >= 8)
+    .sort((a, b) => b.tmr - a.tmr)
+    .slice(0, maxSents);
+  let changed = 0;
+  for (const t of [...targets].sort((a, b) => b.s.start - a.s.start)) {
+    let done = false;
+    for (let attempt = 0; attempt < 2 && !done; attempt++) {
+      try {
+        const { cloaked, restore } = cloakNumbers(t.s.text);
+        const cand = restore(await completeUnit({ text: cloaked, sampling: { temperature: 0.9, topP: 0.95 } }));
+        const v = validateUnit(t.s.text, cand, lang);
+        if (!v.ok) { log(`    s${t.i + 1} rejected (${v.reason})`); continue; }
+        const candSents = splitSentences(cand, lang).map((s) => s.text);
+        const cgrams = await grammarScores(candSents);
+        if (cgrams.some((g) => g < 0.75)) { log(`    s${t.i + 1} ungrammatical`); continue; }
+        const [ct] = await scoreTexts([cand]);
+        if ((ct?.p_ai_gen ?? 1) >= t.tmr - 0.02) { log(`    s${t.i + 1}: tmr ${t.tmr.toFixed(2)} → ${(ct?.p_ai_gen ?? 1).toFixed(2)}, no gain`); continue; }
+        paras[idx] = paras[idx].slice(0, t.s.start) + cand + paras[idx].slice(t.s.end);
+        changed++;
+        log(`    s${t.i + 1}: tmr ${t.tmr.toFixed(2)} → ${(ct?.p_ai_gen ?? 1).toFixed(2)} ✓`);
+        done = true;
+      } catch (e) {
+        log(`    s${t.i + 1} failed: ${e.message.slice(0, 80)}`);
+      }
+    }
+  }
+  if (!changed) return false;
+  if (origParas[idx]) {
+    const [pair] = await nliPairs([[origParas[idx], paras[idx]]]);
+    if (pair && pair.contradict > 0.5) {
+      paras[idx] = backup;
+      log(`    sentence mode: NLI reject, paragraph reverted`);
+      return false;
+    }
+  }
+  log(`    sentence mode: ${changed} 句改善`);
+  return true;
+}
+
 export async function grindParas({
   origParas, paras, lang = 'en',
   rounds = 3, worst = 3, gain = 0.02, gate = 0.08, gramCheck = 0.5,
@@ -39,11 +93,12 @@ export async function grindParas({
     for (const w of targets) {
       const p = out[w.i];
       let improved = false;
+      let sawUngrammatical = false;
       for (let attempt = 0; attempt < temps.length && !improved; attempt++) {
         stats.attempts++;
         try {
           const { cloaked, restore } = cloakNumbers(p);
-          const candidate = restore(await completeUnit({ text: cloaked, sampling: { temperature: temps[attempt], topP: 0.95 } }));
+          const candidate = restore(await completeUnit({ text: cloaked, sampling: { temperature: temps[attempt % temps.length], topP: 0.95 } }));
           const v = validateUnit(p, candidate, lang);
           if (!v.ok) { stats.rejected++; log(`  p${w.i + 1}: attempt ${attempt + 1} rejected (${v.reason})`); continue; }
           if (origParas[w.i]) {
@@ -58,7 +113,7 @@ export async function grindParas({
             if (sents.length) {
               const grams = await grammarScores(sents);
               const bad = grams.filter((g) => g < gramCheck).length;
-              if (bad > 0) { stats.rejected++; log(`  p${w.i + 1}: attempt ${attempt + 1} ungrammatical (${bad}/${sents.length} sentences < ${gramCheck})`); continue; }
+              if (bad > 0) { stats.rejected++; sawUngrammatical = true; log(`  p${w.i + 1}: attempt ${attempt + 1} ungrammatical (${bad}/${sents.length} sentences < ${gramCheck})`); continue; }
             }
           }
           const [sc] = await scoreTexts([candidate]);
@@ -75,6 +130,15 @@ export async function grindParas({
         } catch (e) {
           stats.failed++;
           log(`  p${w.i + 1} failed: ${e.message.slice(0, 80)}`);
+        }
+      }
+      // 8.4: paragraph regen keeps shattering → drop to per-sentence attacks
+      if (!improved && sawUngrammatical) {
+        log(`  p${w.i + 1}: paragraph regen shatters, trying sentence mode`);
+        if (await sentenceModeRegen({ paras: out, idx: w.i, origParas, lang, log })) {
+          improved = true; acceptedAny = true; stats.accepted++;
+          const [sc] = await scoreTexts([out[w.i]]);
+          stats.paraDeltas[w.i] = { before: Number(w.s.toFixed(3)), after: Number((sc?.p_ai_gen ?? 1).toFixed(3)) };
         }
       }
     }

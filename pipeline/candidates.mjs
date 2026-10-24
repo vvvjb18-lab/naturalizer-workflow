@@ -593,21 +593,21 @@ export function cvOf(text, lang = 'en') {
   return mean > 0 ? Math.sqrt(va) / mean : 0;
 }
 
-const BURST_INSTR = 'Vary sentence length strongly: mix very short sentences (3-6 words) with much longer ones. Cut filler words. Every fact, number and citation must survive unchanged.';
+const BURST_INSTR = 'Restructure the sentences with strong length contrast: include several very short sentences (3-6 words), several medium ones (10-15 words), and at least one or two long ones (25-35 words). Cut filler words. Break overly parallel structures. Every fact, number and citation must survive unchanged.';
 
 export async function burstifyCandidate({
   c, originalsByPara, targetIdx, lang = 'en',
-  rounds = 2, worst = 3, tries = 2, log = () => {},
+  rounds = 3, worst = 4, tries = 3, cvTarget = 0.45, gramCheck = 0.5, log = () => {},
 }) {
   const paras = { ...c.paras };
   const moves = [];
   for (let r = 1; r <= rounds; r++) {
     const flat = Object.entries(paras)
       .map(([i, text]) => ({ i, cv: cvOf(text, lang), n: splitSentences(text, lang).length }))
-      .filter((s) => s.n >= 3)
+      .filter((s) => s.n >= 2 && s.cv < cvTarget)
       .sort((a, b) => a.cv - b.cv)
       .slice(0, worst);
-    if (!flat.length) break;
+    if (!flat.length) { log(`  round ${r}: all paragraphs ≥ cv ${cvTarget}, done`); break; }
     log(`  round ${r}: flattest = ${flat.map((f) => `p${f.i}(cv ${f.cv.toFixed(2)})`).join(' ')}`);
     let improved = false;
     for (const t of flat) {
@@ -615,13 +615,19 @@ export async function burstifyCandidate({
       for (let attempt = 0; attempt < tries && !done; attempt++) {
         try {
           const { cloaked, restore } = cloakNumbers(paras[t.i]);
-          const out = restore(await completeUnit({ text: cloaked, sampling: { temperature: 1.05, topP: 0.95 }, instruction: BURST_INSTR }));
+          const out = restore(await completeUnit({ text: cloaked, sampling: { temperature: [0.95, 1.05, 1.1][attempt % 3], topP: 0.95 }, instruction: BURST_INSTR }));
           const v = validateUnit(originalsByPara[t.i] || paras[t.i], out, lang);
           if (!v.ok) { log(`    p${t.i} rejected (${v.reason})`); continue; }
+          const outSents = splitSentences(out, lang).map((s) => s.text);
+          if (outSents.length) {
+            const grams = await grammarScores(outSents);
+            const bad = grams.filter((g) => g < gramCheck).length;
+            if (bad > 0) { log(`    p${t.i} ungrammatical (${bad}/${outSents.length})`); continue; }
+          }
           const [pair] = await nliPairs([[originalsByPara[t.i] || '', out]]);
           if (pair && pair.contradict > 0.5) { log(`    p${t.i} NLI reject`); continue; }
           const newCv = cvOf(out, lang);
-          if (newCv <= t.cv * 1.1) { log(`    p${t.i} cv ${t.cv.toFixed(2)} → ${newCv.toFixed(2)}, no gain`); continue; }
+          if (newCv < Math.min(cvTarget, t.cv * 1.15)) { log(`    p${t.i} cv ${t.cv.toFixed(2)} → ${newCv.toFixed(2)}, no gain`); continue; }
           paras[t.i] = out;
           moves.push({ para: t.i, cvBefore: Number(t.cv.toFixed(2)), cvAfter: Number(newCv.toFixed(2)) });
           log(`    p${t.i}: cv ${t.cv.toFixed(2)} → ${newCv.toFixed(2)} ✓`);
