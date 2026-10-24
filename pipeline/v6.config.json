@@ -9,6 +9,13 @@
  "grammarDamageDrop": 0.3,
  "surgeryTries": 3,
  "maxSurgeries": 8,
+ "wordBudget": {
+  "_desc": "7.6：enabled=true 時交付前執行字數預算（刪除優先、超配額段才定向壓縮、全程 validateUnit+NLI）。maxWords 必填；floorWords 選填下限；maxCutRatio 超過即拒絕（--force-budget 覆蓋）。CLI --max-words/--floor-words/--force-budget 覆蓋此處。",
+  "enabled": false,
+  "maxWords": null,
+  "floorWords": null,
+  "maxCutRatio": 0.3
+ },
  "samplings": [
   {
    "temperature": 1.0,

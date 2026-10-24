@@ -109,11 +109,19 @@ export function cloakNumbers(text) {
   };
 }
 
-export async function completeUnit({ text, sampling = {}, timeoutMs = 600000 }) {
+export async function completeUnit({ text, sampling = {}, timeoutMs = 600000, instruction = '' }) {
   const tokens = await countTokens(text);
+  // 7.6 word-budget mode: same hz rewrite instruction plus an explicit length
+  // directive. Deliberately outside the byte-exact fingerprint contract — this
+  // is our own extension, never claims to be hz's prompt.
+  const prompt = instruction
+    ? `${INSTR}\n\n${instruction}\n\n${text.trim()}${SEP}`
+    : buildPrompt(text);
   const body = {
-    prompt: buildPrompt(text),
-    n_predict: nPredictFor(tokens),
+    prompt,
+    n_predict: instruction
+      ? Math.min(2048, Math.max(128, Math.round(tokens * 1.6)))
+      : nPredictFor(tokens),
     temperature: sampling.temperature ?? 1.0,
     top_p: sampling.topP ?? 0.95,
     top_k: 0,
@@ -507,3 +515,177 @@ export function shouldStopEarly(cands, { formMode = false, target = 'balanced', 
     return target === 'ideal' ? (dmg >= 0.03 && dmg <= 0.2) : dmg <= 0.08;
   });
 }
+
+// ── 7.6: word budget ────────────────────────────────────────────────────────
+// Principle: delete before rewriting. Cutting a sentence from the untouched
+// original adds zero AI-edit signal and keeps the surviving rhythm; a regen
+// compression is only spent on target paragraphs still over their quota, and
+// only behind validateUnit + the NLI gate. Never cuts mid-sentence, never
+// deletes a sentence carrying numbers/citations, never below floorWords.
+const REF_HEAD_RE = /^(references?|reference list|works cited|bibliography|參考文獻|參考資料)\s*:?\s*$/i;
+
+// Every counted paragraph (empty lines and the References block excluded —
+// academic word limits conventionally ignore them).
+export function countedParagraphs(plan, paras) {
+  const out = [];
+  let inRefs = false;
+  (plan.paragraphs || []).forEach((t, i) => {
+    const s = String(t || '').trim();
+    if (!s) return;
+    if (!inRefs && REF_HEAD_RE.test(s)) { inRefs = true; return; }
+    if (inRefs) return;
+    out.push({ idx: String(i), original: s, text: paras[i] != null ? paras[i] : s });
+  });
+  return out;
+}
+
+function sacrificialSentences(text, lang) {
+  const sents = splitSentences(text, lang);
+  return sents
+    .map((s, i) => ({
+      i, text: s.text, words: wordCount(s.text, lang),
+      isTopic: i === 0 || i === sents.length - 1,   // topic & wrap-up stay
+      hasFact: factNumbers(s.text).length > 0 || citationsIn(s.text).length > 0,
+    }))
+    .filter((s) => !s.isTopic && !s.hasFact && s.words >= 6)
+    .sort((a, b) => b.words - a.words);
+}
+
+function dropSentences(text, lang, drops) {
+  const sents = splitSentences(text, lang);
+  const kill = new Set(drops);
+  return sents.filter((s, i) => !kill.has(i)).map((s) => s.text).join(' ');
+}
+
+export async function applyWordBudget({
+  plan, chosenParas, originalsByPara, lang = 'en',
+  budget = {}, log = () => {},
+}) {
+  const { maxWords, floorWords = null, maxCutRatio = 0.3, force = false } = budget;
+  const doc = countedParagraphs(plan, chosenParas);
+  if (!doc.length) return { ok: true, stats: { ok: true, note: 'no counted paragraphs' }, targetParas: {}, keptEdits: [] };
+  if (floorWords != null && floorWords > maxWords) {
+    return { ok: false, stats: { ok: false, reason: `floorWords ${floorWords} > maxWords ${maxWords}（配置矛盾）` }, targetParas: {}, keptEdits: [] };
+  }
+  const w = (t) => wordCount(t, lang);
+  const totalNow = doc.reduce((n, p) => n + w(p.text), 0);
+  const need = totalNow - maxWords;
+  const stats = {
+    ok: true, maxWords, floorWords, beforeWords: totalNow,
+    deletedSentences: 0, deletedWords: 0, compressedParas: 0, failedCompressions: 0,
+  };
+  if (need <= 0) {
+    stats.afterWords = totalNow;
+    stats.note = `已在預算內（${totalWordsStr(totalNow, lang)} ≤ ${maxWords}），無需刪減`;
+    log(stats.note);
+    return { ok: true, stats, targetParas: {}, keptEdits: [] };
+  }
+  const cutRatio = need / totalNow;
+  stats.cutRatio = Number(cutRatio.toFixed(3));
+  if (cutRatio > maxCutRatio && !force) {
+    stats.ok = false;
+    stats.reason = `需削 ${Math.round(cutRatio * 100)}% > 上限 ${Math.round(maxCutRatio * 100)}%（--force-budget 可強制，建議人工確認內容取捨）`;
+    return { ok: false, stats, targetParas: {}, keptEdits: [] };
+  }
+
+  // Round 1 — pure deletion, kept (untouched) paragraphs first: cutting there
+  // carries no AI signal at all; then target paragraphs.
+  const targetParas = {};
+  const keptEdits = [];
+  let remaining = need;
+  const isTgt = (p) => (chosenParas[p.idx] != null ? 1 : 0);
+  const order = [...doc].sort((a, b) => (isTgt(a) - isTgt(b)) || (w(b.text) - w(a.text)));
+  for (const p of order) {
+    if (remaining <= 0) break;
+    const isTarget = chosenParas[p.idx] != null;
+    const cur = isTarget ? chosenParas[p.idx] : p.text;
+    const minParaWords = Math.max(15, Math.round(w(cur) * 0.4));  // don't hollow a paragraph out
+    let canCut = w(cur) - minParaWords;
+    if (canCut <= 0) continue;
+    const killed = new Set();   // sentence indices (vs the round-start text) already cut
+    for (const s of sacrificialSentences(cur, lang)) {
+      if (remaining <= 0 || canCut - s.words < 0) break;
+      killed.add(s.i);
+      const next = dropSentences(cur, lang, killed);
+      if (!next || w(next) <= 0) { killed.delete(s.i); break; }
+      if (isTarget) targetParas[p.idx] = next;
+      else {
+        const idxN = Number(p.idx);
+        const prev = keptEdits.findIndex((e) => e.idx === idxN);
+        if (prev >= 0) keptEdits[prev] = { idx: idxN, text: next };
+        else keptEdits.push({ idx: idxN, text: next });
+      }
+      if (chosenParas[p.idx] != null) chosenParas[p.idx] = next; else p.text = next;
+      remaining -= s.words;
+      stats.deletedSentences++;
+      stats.deletedWords += s.words;
+      canCut -= s.words;
+    }
+  }
+  const afterDel = doc.reduce((n, p) => n + w(chosenParas[p.idx] != null ? chosenParas[p.idx] : p.text), 0);
+  log(`刪除輪：刪 ${stats.deletedSentences} 句（-${stats.deletedWords} 詞）→ ${afterDel} / ${maxWords}`);
+
+  // Round 2 — targeted regen compression on target paragraphs still over their
+  // proportional quota. Kept paragraphs are never regenerated: they currently
+  // carry zero rewrite signal and it must stay that way.
+  if (afterDel > maxWords) {
+    const totalOrig = doc.reduce((n, p) => n + w(p.original), 0);
+    const over = doc
+      .filter((p) => chosenParas[p.idx] != null)
+      .map((p) => ({
+        idx: p.idx,
+        text: chosenParas[p.idx],
+        quota: Math.max(30, Math.round((w(p.original) / totalOrig) * maxWords)),
+      }))
+      .filter((p) => w(p.text) > p.quota * 1.15)
+      .sort((a, b) => (w(b.text) - b.quota) - (w(a.text) - a.quota));
+    if (!over.length) log('壓縮輪：無超配額的目標段（超額來自 kept 段——請人工確認）');
+    for (const p of over) {
+      const cur = chosenParas[p.idx];
+      const before = originalsByPara[p.idx] || cur;
+      let accepted = null;
+      for (let attempt = 1; attempt <= 3 && !accepted; attempt++) {
+        try {
+          const { cloaked, restore } = cloakNumbers(cur);
+          const instruction = `Compress your rewrite to roughly ${p.quota} words. Cutting detail is fine; changing meaning is not.`;
+          const out = restore(await completeUnit({ text: cloaked, sampling: { temperature: 1.0, topP: 0.95 }, instruction }));
+          const v = validateUnit(before, out, lang);
+          if (!v.ok) { log(`  壓縮 p${p.idx} 嘗試 ${attempt} 拒收（${v.reason}）`); continue; }
+          if (w(out) > p.quota * 1.15) { log(`  壓縮 p${p.idx} 嘗試 ${attempt} 仍超配額（${w(out)} > ${p.quota}）`); continue; }
+          if (lang !== 'zh') {
+            const nli = await nliPairs([[before, out]]);
+            if (nli[0] && nli[0].contradict > 0.5) { log(`  壓縮 p${p.idx} 嘗試 ${attempt} NLI 矛盾 ${fmt3(nli[0].contradict)}，拒收`); continue; }
+          }
+          accepted = out;
+        } catch (e) {
+          log(`  壓縮 p${p.idx} 嘗試 ${attempt} 失敗（${e.message}）`);
+        }
+      }
+      if (accepted) {
+        chosenParas[p.idx] = accepted;
+        targetParas[p.idx] = accepted;
+        stats.compressedParas++;
+        log(`  壓縮 p${p.idx}：${w(cur)} → ${w(accepted)} 詞（配額 ${p.quota}）`);
+      } else {
+        stats.failedCompressions++;
+      }
+    }
+  }
+
+  stats.afterWords = doc.reduce((n, p) => n + w(chosenParas[p.idx] != null ? chosenParas[p.idx] : p.text), 0);
+  if (stats.afterWords > maxWords) {
+    stats.ok = false;
+    stats.reason = `刪除＋壓縮後仍 ${stats.afterWords} > ${maxWords}（超 ${stats.afterWords - maxWords} 詞，需人工取捨）`;
+    return { ok: false, stats, targetParas, keptEdits };
+  }
+  if (floorWords != null && stats.afterWords < floorWords) {
+    stats.ok = false;
+    stats.reason = `低於下限：${stats.afterWords} < ${floorWords}（刪減過頭，請放寬上限或收緊 maxCutRatio）`;
+    return { ok: false, stats, targetParas, keptEdits };
+  }
+  log(`預算達成：${stats.beforeWords} → ${stats.afterWords} 詞（上限 ${maxWords}${floorWords != null ? `，下限 ${floorWords}` : ''}）`);
+  return { ok: true, stats, targetParas, keptEdits };
+}
+
+function totalWordsStr(n, lang) { return lang === 'zh' ? `${n} 字` : `${n} words`; }
+function fmt3(x) { return Number(x).toFixed(3); }

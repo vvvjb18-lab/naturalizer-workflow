@@ -22,7 +22,7 @@ import {
   generateCandidate, candidateStats, rankCandidates,
   grammarScores, nliPairs, scoreFiles, closeDetector,
   detectDocType, surgicalRepair, assembleCrossover, shouldStopEarly,
-  mechanicalPolish,
+  mechanicalPolish, applyWordBudget,
 } from './candidates.mjs';
 import { detectLang, splitSentences, wordCount } from '../polish/src/text.mjs';
 import { factNumbers, citationsIn } from '../polish/src/checks.mjs';
@@ -53,6 +53,9 @@ const HELP = `v6.mjs — Workflow 7.0（選擇式管線：早停 × 手術 × �
   --no-lt              停用 LanguageTool 確定性語法層
   --final-name N       交付副本檔名（預設 final7.0）
   --form / --essay     強制文件型別
+  --max-words N        7.6 字數預算：交付上限 N 詞（刪除優先，超 30% 削幅需 --force-budget）
+  --floor-words N      字數下限（作業最少字數；低於即報錯不交付）
+  --force-budget       允許超過 30% 的刪減幅度（建議先人工確認內容取捨）
 `;
 
 function parseArgs(argv) {
@@ -114,6 +117,12 @@ async function main() {
   const useCrossover = cfg.crossover !== false;
   const useAdaptive = cfg.adaptive !== false;
   const gramThreshold = cfg.grammarThreshold ?? 0.5;
+
+  // 7.6 word budget: config block or CLI flags (CLI wins)
+  const wb = { ...(cfg.wordBudget || {}) };
+  if (args.k['max-words']) { wb.enabled = true; wb.maxWords = parseInt(args.k['max-words'], 10); }
+  if (args.k['floor-words']) wb.floorWords = parseInt(args.k['floor-words'], 10);
+  if (args.k['force-budget']) wb.force = true;
 
   const input = path.resolve(args._[0]);
   if (!fs.existsSync(input)) { console.error(`找不到原稿：${input}`); process.exit(1); }
@@ -371,6 +380,40 @@ async function main() {
       }
     }
 
+    // 7.6: word budget — delete-first (pure cuts carry zero AI-edit signal),
+    // targeted hz compression only for target paragraphs still over quota,
+    // everything behind validateUnit + NLI. Runs before mech/LT so the final
+    // grammar passes see the budgeted text (both are word-neutral).
+    let budgetStats = null;
+    let budgetKeptEdits = [];
+    if (wb.enabled && wb.maxWords) {
+      console.log(`=== 7.6 字數預算（上限 ${wb.maxWords}${wb.floorWords ? `，下限 ${wb.floorWords}` : ''} 詞）===`);
+      const res = await applyWordBudget({
+        plan, chosenParas: chosen.paras, originalsByPara, lang,
+        budget: {
+          maxWords: wb.maxWords,
+          floorWords: wb.floorWords ?? null,
+          maxCutRatio: wb.maxCutRatio ?? 0.3,
+          force: !!wb.force,
+        },
+        log: (m) => console.log(`  ${m}`),
+      });
+      budgetStats = res.stats;
+      if (!res.ok) throw new Error(`字數預算無法安全達成：${res.stats.reason || 'unknown'}`);
+      budgetKeptEdits = res.keptEdits || [];
+      chosen.prose = targetIdx.map((i) => chosen.paras[i]).filter(Boolean).join('\n\n');
+      const newStats = candidateStats({ originalProse, prose: chosen.prose, lang });
+      newStats.coverage = chosen.stats.coverage;
+      chosen.stats = newStats;
+      // compression smooths — if the budget pass pushed CV under the band the
+      // delivery is no longer calibrated; surface it instead of shipping blind
+      const cvFloor = (cfg.filters?.cvBand?.[0] ?? 0.45) * 0.9;
+      if (!docType.form && newStats.cv > 0 && newStats.cv < cvFloor) {
+        budgetStats.cvWarn = Number(newStats.cv.toFixed(3));
+        console.log(`  ⚠ 壓縮後 CV ${fmt(newStats.cv, 3)} 低於安全帶下限 ${fmt(cvFloor, 3)}——交付前建議人工覆核節奏`);
+      }
+    }
+
     // 7.1: deterministic punctuation/quote pass (citation period placement,
     // mixed quotes, missing period before labels) — the classes CoLA cannot
     // see and the user's QA caught in 7.0.
@@ -417,10 +460,12 @@ async function main() {
     const aProse = path.join(outDir, `${base}.v6-A.prose.txt`);
     fs.writeFileSync(aProse, chosen.prose + '\n', 'utf8');
     if (isDocx) {
-      const map = {
-        indices: Object.keys(chosen.paras).map(Number),
-        texts: Object.keys(chosen.paras).map((i) => chosen.paras[i]),
-      };
+      const mapIdx = Object.keys(chosen.paras).map(Number);
+      const mapTxt = Object.keys(chosen.paras).map((i) => chosen.paras[i]);
+      for (const e of budgetKeptEdits) {          // 7.6: deletions in kept paragraphs
+        if (!mapIdx.includes(e.idx)) { mapIdx.push(e.idx); mapTxt.push(e.text); }
+      }
+      const map = { indices: mapIdx, texts: mapTxt };
       const mapPath = path.join(workDir, 'amap.json');
       fs.writeFileSync(mapPath, JSON.stringify(map), 'utf8');
       console.log(runBridge(['apply', input, mapPath, aDocx]));
@@ -512,6 +557,7 @@ async function main() {
       originalScore, origGrammarDamage: origDamage, chosenScore: chosen.score,
       bScore: bScores, deltas: { p_ai_edit: deltaEdit, p_ai_gen: deltaGen },
       cvGuard, formCheck,
+      budget: budgetStats,
       editLensDeltaAdvisory: cfg.editLensDeltaAdvisory ?? 0.1,
       files: { aDocx, aProse, bDocx, bReport },
     };
@@ -532,6 +578,7 @@ async function main() {
 ${rows}
 
 原稿基準：ppl ${fmt(originalScore?.perplexity, 1)} · gen ${fmt(originalScore?.p_ai_gen)} · edit ${fmt(originalScore?.p_ai_edit)} · 語法傷率 ${fmt(origDamage)}
+${budgetStats ? `\n## 字數預算（7.6）\n\n- 上限 ${budgetStats.maxWords}${budgetStats.floorWords != null ? ` · 下限 ${budgetStats.floorWords}` : ''}：**${budgetStats.beforeWords} → ${budgetStats.afterWords} 詞**\n- 刪句 ${budgetStats.deletedSentences}（-${budgetStats.deletedWords} 詞） · 定向壓縮 ${budgetStats.compressedParas} 段${budgetStats.failedCompressions ? ` · 壓縮失敗 ${budgetStats.failedCompressions} 段` : ''}${budgetStats.cutRatio != null ? ` · 削幅 ${(budgetStats.cutRatio * 100).toFixed(0)}%` : ''}\n${budgetStats.cvWarn ? `- ⚠ 壓縮後 CV ${budgetStats.cvWarn} 低於安全帶——建議人工覆核節奏\n` : ''}` : ''}
 ${formCheck ? `\n## form 檢查\n\n引用 ${formCheck.citations} 個 / 數字 ${formCheck.numbers} 個：${formCheck.missingCitations.length || formCheck.missingNumbers.length ? `**缺 ${formCheck.missingCitations.length} 引用、${formCheck.missingNumbers.length} 數字，需人工核對**` : '全數保留 ✓'}\n` : ''}
 ## A → B
 
