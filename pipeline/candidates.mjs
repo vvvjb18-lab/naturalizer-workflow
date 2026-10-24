@@ -579,6 +579,64 @@ export function shouldStopEarly(cands, { formMode = false, target = 'balanced', 
   });
 }
 
+// ── 8.3: burstiness rebuild for flat document families ──────────────────────
+// The CV band (0.45–0.65) is calibrated on E2-family essays (origCv ≈ 0.37).
+// Documents whose original CV sits at ~0.27 produce candidates at 0.29–0.36 —
+// every one culled by the band floor, and the pipeline died. Here the
+// flattest paragraphs are regenerated with an explicit sentence-length-
+// variance instruction; acceptance per paragraph: CV rises ≥10%, validateUnit
+// + NLI hold.
+export function cvOf(text, lang = 'en') {
+  const lens = splitSentences(text, lang).map((s) => wordCount(s.text, lang));
+  const mean = lens.reduce((a, b) => a + b, 0) / Math.max(1, lens.length);
+  const va = lens.reduce((a, b) => a + (b - mean) ** 2, 0) / Math.max(1, lens.length);
+  return mean > 0 ? Math.sqrt(va) / mean : 0;
+}
+
+const BURST_INSTR = 'Vary sentence length strongly: mix very short sentences (3-6 words) with much longer ones. Cut filler words. Every fact, number and citation must survive unchanged.';
+
+export async function burstifyCandidate({
+  c, originalsByPara, targetIdx, lang = 'en',
+  rounds = 2, worst = 3, tries = 2, log = () => {},
+}) {
+  const paras = { ...c.paras };
+  const moves = [];
+  for (let r = 1; r <= rounds; r++) {
+    const flat = Object.entries(paras)
+      .map(([i, text]) => ({ i, cv: cvOf(text, lang), n: splitSentences(text, lang).length }))
+      .filter((s) => s.n >= 3)
+      .sort((a, b) => a.cv - b.cv)
+      .slice(0, worst);
+    if (!flat.length) break;
+    log(`  round ${r}: flattest = ${flat.map((f) => `p${f.i}(cv ${f.cv.toFixed(2)})`).join(' ')}`);
+    let improved = false;
+    for (const t of flat) {
+      let done = false;
+      for (let attempt = 0; attempt < tries && !done; attempt++) {
+        try {
+          const { cloaked, restore } = cloakNumbers(paras[t.i]);
+          const out = restore(await completeUnit({ text: cloaked, sampling: { temperature: 1.05, topP: 0.95 }, instruction: BURST_INSTR }));
+          const v = validateUnit(originalsByPara[t.i] || paras[t.i], out, lang);
+          if (!v.ok) { log(`    p${t.i} rejected (${v.reason})`); continue; }
+          const [pair] = await nliPairs([[originalsByPara[t.i] || '', out]]);
+          if (pair && pair.contradict > 0.5) { log(`    p${t.i} NLI reject`); continue; }
+          const newCv = cvOf(out, lang);
+          if (newCv <= t.cv * 1.1) { log(`    p${t.i} cv ${t.cv.toFixed(2)} → ${newCv.toFixed(2)}, no gain`); continue; }
+          paras[t.i] = out;
+          moves.push({ para: t.i, cvBefore: Number(t.cv.toFixed(2)), cvAfter: Number(newCv.toFixed(2)) });
+          log(`    p${t.i}: cv ${t.cv.toFixed(2)} → ${newCv.toFixed(2)} ✓`);
+          improved = true;
+          done = true;
+        } catch (e) {
+          log(`    p${t.i} failed: ${e.message.slice(0, 80)}`);
+        }
+      }
+    }
+    if (!improved) break;
+  }
+  return { paras, moves };
+}
+
 // ── 7.6: word budget ────────────────────────────────────────────────────────
 // Principle: delete before rewriting. Cutting a sentence from the untouched
 // original adds zero AI-edit signal and keeps the surviving rhythm; a regen

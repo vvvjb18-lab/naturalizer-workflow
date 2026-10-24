@@ -23,6 +23,7 @@ import {
   grammarScores, nliPairs, scoreFiles, closeDetector,
   detectDocType, surgicalRepair, assembleCrossover, shouldStopEarly,
   mechanicalPolish, applyWordBudget, scoreTexts, citationConsistency,
+  burstifyCandidate, cvOf,
 } from './candidates.mjs';
 import { grindParas, rescueContradictions, similarityPolish } from './grind.mjs';
 import { detectLang, splitSentences, wordCount } from '../polish/src/text.mjs';
@@ -324,11 +325,64 @@ async function main() {
       filters: { ...cfg.filters, formMode: docType.form },
     });
     rejected.forEach((c) => console.log(`  cand${c.id} 淘汰（damage=${fmt(c.grammarDamage)} CV=${fmt(c.stats.cv)} cvRatio=${fmt(c.stats.cvRatio, 2)} coverage=${fmt(c.stats.coverage, 2)}）`));
-    if (!eligible.length) throw new Error('沒有候選通過硬過濾；提高 --candidates 或放寬 v6.config.json');
+    rejected.forEach((c) => console.log(`  cand${c.id} 淘汰（damage=${fmt(c.grammarDamage)} CV=${fmt(c.stats.cv)} cvRatio=${fmt(c.stats.cvRatio, 2)} coverage=${fmt(c.stats.coverage, 2)}）`));
 
+    let chosen = null;
     let pool = [...candidates];
     let assembled = null;
-    if (useCrossover) {
+    // 8.3: flat document family — every candidate culled ONLY by the CV band
+    // floor (their original CV sits far below the E2-calibrated 0.45). Two
+    // rescue stages before giving up: (a) burstiness rebuild on the two best
+    // rejected candidates, re-rank; (b) still nothing → deliver the best
+    // available with a loud uncalibrated-band warning instead of dying.
+    let bandFallback = null;
+    if (!eligible.length && !docType.form && cfg.lowCvFallback?.enabled !== false) {
+      const bandLo = (cfg.filters?.cvBand?.[0] ?? 0.45) * 0.9;
+      const bandCulled = rejected.filter((c) => (c.stats?.coverage ?? 0) >= 1
+        && (c.grammarDamage ?? 1) <= (cfg.filters?.maxGrammarDamage ?? 0.08)
+        && (c.stats?.cv ?? 0) > 0 && c.stats.cv < bandLo);
+      if (bandCulled.length === rejected.length && bandCulled.length) {
+        console.log(`⚠ 全部候選 CV < ${fmt(bandLo, 3)}——此文檔族（原稿 CV ${fmt(cvOf(originalProse, lang), 3)}）低於 E2 校準帶，啟動 burstiness 重造（8.3）`);
+        const seeds = [...bandCulled].sort((a, b) => (a.score?.p_ai_gen ?? 1) - (b.score?.p_ai_gen ?? 1)).slice(0, 2);
+        for (let bi = 0; bi < seeds.length; bi++) {
+          const seed = seeds[bi];
+          console.log(`  burstify 自 cand${seed.id}（gen ${fmt(seed.score?.p_ai_gen)}）`);
+          const { paras: burst, moves } = await burstifyCandidate({
+            c: seed, originalsByPara, targetIdx, lang,
+            rounds: cfg.lowCvFallback?.rounds ?? 2, worst: cfg.lowCvFallback?.worst ?? 3,
+            log: (m) => console.log(`    ${m}`),
+          });
+          seed.paras = burst;
+          seed.prose = targetIdx.map((i) => burst[i]).filter(Boolean).join('\n\n');
+          const st = candidateStats({ originalProse, prose: seed.prose, lang });
+          st.coverage = seed.stats.coverage;
+          seed.stats = st;
+          seed.grammarDamage = await damageOf(seed.prose);
+          const [bs] = await scoreTexts([seed.prose]);
+          if (bs) seed.score = { ...seed.score, ...bs };
+          fs.writeFileSync(path.join(workDir, `cand${seed.id}.burst.prose.txt`), seed.prose + '\n', 'utf8');
+          console.log(`  cand${seed.id} burst 後：CV ${fmt(st.cv, 3)} gen ${fmt(seed.score?.p_ai_gen)} damage ${fmt(seed.grammarDamage)}（${moves.length} 段重造）`);
+        }
+        ({ eligible, rejected } = rankCandidates(pool, { weights: cfg.weights, filters: { ...cfg.filters, formMode: docType.form } }));
+      }
+    }
+    if (!eligible.length) {
+      // deliver-with-warning: best rejected = full coverage, clean, lowest gen
+      const fallbackPool = rejected.filter((c) => (c.stats?.coverage ?? 0) >= 1 && (c.grammarDamage ?? 1) <= (cfg.filters?.maxGrammarDamage ?? 0.08));
+      if (fallbackPool.length && !docType.form && cfg.lowCvFallback?.deliver !== false) {
+        chosen = fallbackPool.sort((a, b) => (a.score?.p_ai_gen ?? 1) - (b.score?.p_ai_gen ?? 1))[0];
+        bandFallback = {
+          cv: chosen.stats.cv, band: cfg.filters?.cvBand ?? [0.45, 0.65],
+          reason: '全部候選 CV 低於校準帶下限（此文檔族未經 Turnitin 驗證）',
+        };
+        console.log(`⚠ 帶外交付：選 CV/分數最佳的 cand${chosen.id}（CV ${fmt(chosen.stats.cv, 3)} gen ${fmt(chosen.score?.p_ai_gen)}）——此文檔族的 CV 帶未經 Turnitin 校準，交付前請知悉風險`);
+      } else {
+        throw new Error('沒有候選通過硬過濾；提高 --candidates 或放寬 v6.config.json');
+      }
+    }
+
+    if (!chosen) {
+      if (useCrossover) {
       const poolOk = candidates.filter((c) => (c.stats?.coverage ?? 0) >= 1);
       if (poolOk.length >= 2) {
         const rankAll = rankCandidates(candidates, { weights: cfg.weights, filters: { ...cfg.filters, formMode: docType.form } });
@@ -366,7 +420,6 @@ async function main() {
     // risk with a ppl tie-break — among equal-risk candidates the higher
     // perplexity one uses less stock phrasing, the offline proxy for Turnitin
     // similarity (13% @ ppl 30.5 vs 22% @ ppl 24.9, E2 family).
-    let chosen = null;
     const minEntail = cfg.filters?.minEntail ?? 0.6;
     const passing = [];
     for (const c of eligible) {
@@ -442,6 +495,7 @@ async function main() {
       : bestRisk;
     if (tie.length > 1) console.log(`  平手抉選（risk 差 ≤0.02，${tie.length} 候選）：選 ppl 較高者壓查重`);
     console.log(`  → 選定 ${chosen.crossover ? '重組 X' : `cand${chosen.id}`}`);
+    }
 
     // 8.2: citation/reference year consistency — the pipeline preserves
     // citations verbatim, including the DRAFT's own in-text vs References
@@ -813,7 +867,7 @@ async function main() {
     const md = `# Workflow 8.1 風險卡
 
 - 生成時間：${report.generatedAt}
-- 原稿：${input} · 語言 ${lang} · 型別 **${docType.form ? 'form／模板（V2 配方）' : 'essay（CV 帶）'}**
+- 原稿：${input} · 語言 ${lang} · 型別 **${docType.form ? 'form／模板（V2 配方）' : 'essay（CV 帶）'}**${bandFallback ? `\n- ⚠ **帶外交付**：${bandFallback.reason}——CV ${fmt(bandFallback.cv, 3)} 低於校準帶 ${fmt(bandFallback.band[0], 2)}–${fmt(bandFallback.band[1], 2)}，此文檔族未經 Turnitin 驗證，建議先送檢一次確認再批量` : ''}
 - 候選 ${candidates.length}${assembled ? ' + 重組 X' : ''} · 手術 ${pool.reduce((n, c) => n + (c.surgeries || []).length, 0)} 處 · 選定 **${chosen.crossover ? '重組 X' : `cand${chosen.id}`}${chosen.crossover ? `（逐段取自 cand{${Object.values(chosen.provenance).join(',')}}）` : ''}**
 
 ## 候選對照
@@ -823,7 +877,7 @@ async function main() {
 ${rows}
 
 原稿基準：ppl ${fmt(originalScore?.perplexity, 1)} · gen ${fmt(originalScore?.p_ai_gen)} · edit ${fmt(originalScore?.p_ai_edit)} · 語法傷率 ${fmt(origDamage)}
-${budgetStats ? `\n## 字數預算（7.6）\n\n- 上限 ${budgetStats.maxWords}${budgetStats.floorWords != null ? ` · 下限 ${budgetStats.floorWords}` : ''}：**${budgetStats.beforeWords} → ${budgetStats.afterWords} 詞**\n- 刪句 ${budgetStats.deletedSentences}（-${budgetStats.deletedWords} 詞） · 定向壓縮 ${budgetStats.compressedParas} 段${budgetStats.failedCompressions ? ` · 壓縮失敗 ${budgetStats.failedCompressions} 段` : ''}${budgetStats.cutRatio != null ? ` · 削幅 ${(budgetStats.cutRatio * 100).toFixed(0)}%` : ''}\n${budgetStats.cvWarn ? `- ⚠ 壓縮後 CV ${budgetStats.cvWarn} 低於安全帶——建議人工覆核節奏\n` : ''}` : ''}${grindInfo ? `\n## 段級研磨（8.0）\n\n- 動作：**${grindInfo.action === 'applied' ? '採用' : grindInfo.action === 'reverted' ? `回退（${grindInfo.reason}）` : grindInfo.action === 'skipped' ? `跳過（${grindInfo.reason || 'form 模式'}）` : '停用'}**\n${grindInfo.preGen != null ? `- 整份 gen：${fmt(grindInfo.preGen)} → ${fmt(grindInfo.postGen)} · 語法傷率：${fmt(grindInfo.postDamage)}\n` : ''}${grindInfo.stats && grindInfo.stats.attempts ? `- 嘗試 ${grindInfo.stats.attempts}＝採用 ${grindInfo.stats.accepted}＋no-gain ${grindInfo.stats.noGain}＋拒收 ${grindInfo.stats.rejected}${grindInfo.stats.failed ? `＋失敗 ${grindInfo.stats.failed}` : ''} · ${grindInfo.stats.roundsRun} 輪\n` : ''}` : ''}${simInfo ? `\n## 查重打磨（8.2）\n\n- 動作：**${simInfo.action === 'applied' ? '採用' : simInfo.action === 'reverted' ? `回退（${simInfo.reason}）` : '無變化'}**\n${simInfo.pplBefore != null ? `- 整份 ppl：${fmt(simInfo.pplBefore, 1)} → ${fmt(simInfo.pplAfter, 1)}（較高＝較少通用措辭）\n` : ''}${simInfo.stats && simInfo.stats.moves && simInfo.stats.moves.length ? `- 改寫句：${simInfo.stats.moves.map((m) => `p${m.para + 1}s${m.sent + 1} ppl ${m.pplBefore}→${m.pplAfter}`).join('、')}\n` : ''}` : ''}${citeCheck && (citeCheck.mismatches.length || citeCheck.checked) ? `\n## 引用一致性（8.2）\n\n- 內文引用 ${citeCheck.checked} 個 · References 條目 ${citeCheck.references} 筆\n${citeCheck.fixes.length ? `- 已自動對齊：${citeCheck.fixes.map((f) => `${f.from} → ${f.to}`).join('、')}\n` : ''}${citeCheck.mismatches.filter((m) => !m.fixed).length ? `- ⚠ 需人工核對：${citeCheck.mismatches.filter((m) => !m.fixed).map((m) => `${m.inText} vs [${m.refYears.join('/')}]`).join('、')}\n` : ''}` : ''}${qFix && qFix.surgeries ? `\n## 二級品質手術（8.2，CoLA < ${qFix.threshold}）\n\n${qFix.list.map((s) => `- 「${s.before}」→「${s.after}」`).join('\n')}\n` : ''}
+${budgetStats ? `\n## 字數預算（7.6）\n\n- 上限 ${budgetStats.maxWords}${budgetStats.floorWords != null ? ` · 下限 ${budgetStats.floorWords}` : ''}：**${budgetStats.beforeWords} → ${budgetStats.afterWords} 詞**\n- 刪句 ${budgetStats.deletedSentences}（-${budgetStats.deletedWords} 詞） · 定向壓縮 ${budgetStats.compressedParas} 段${budgetStats.failedCompressions ? ` · 壓縮失敗 ${budgetStats.failedCompressions} 段` : ''}${budgetStats.cutRatio != null ? ` · 削幅 ${(budgetStats.cutRatio * 100).toFixed(0)}%` : ''}\n${budgetStats.cvWarn ? `- ⚠ 壓縮後 CV ${budgetStats.cvWarn} 低於安全帶——建議人工覆核節奏\n` : ''}` : ''}${grindInfo ? `\n## 段級研磨（8.0）\n\n- 動作：**${grindInfo.action === 'applied' ? '採用' : grindInfo.action === 'reverted' ? `回退（${grindInfo.reason}）` : grindInfo.action === 'skipped' ? `跳過（${grindInfo.reason || 'form 模式'}）` : grindInfo.action === 'no-op' ? '無段改善（文本不變）' : '停用'}**\n${grindInfo.preGen != null ? `- 整份 gen：${fmt(grindInfo.preGen)} → ${fmt(grindInfo.postGen)} · 語法傷率：${fmt(grindInfo.postDamage)}\n` : ''}${grindInfo.stats && grindInfo.stats.attempts ? `- 嘗試 ${grindInfo.stats.attempts}＝採用 ${grindInfo.stats.accepted}＋no-gain ${grindInfo.stats.noGain}＋拒收 ${grindInfo.stats.rejected}${grindInfo.stats.failed ? `＋失敗 ${grindInfo.stats.failed}` : ''} · ${grindInfo.stats.roundsRun} 輪\n` : ''}` : ''}${simInfo ? `\n## 查重打磨（8.2）\n\n- 動作：**${simInfo.action === 'applied' ? '採用' : simInfo.action === 'reverted' ? `回退（${simInfo.reason}）` : '無變化'}**\n${simInfo.pplBefore != null ? `- 整份 ppl：${fmt(simInfo.pplBefore, 1)} → ${fmt(simInfo.pplAfter, 1)}（較高＝較少通用措辭）\n` : ''}${simInfo.stats && simInfo.stats.moves && simInfo.stats.moves.length ? `- 改寫句：${simInfo.stats.moves.map((m) => `p${m.para + 1}s${m.sent + 1} ppl ${m.pplBefore}→${m.pplAfter}`).join('、')}\n` : ''}` : ''}${citeCheck && (citeCheck.mismatches.length || citeCheck.checked) ? `\n## 引用一致性（8.2）\n\n- 內文引用 ${citeCheck.checked} 個 · References 條目 ${citeCheck.references} 筆\n${citeCheck.fixes.length ? `- 已自動對齊：${citeCheck.fixes.map((f) => `${f.from} → ${f.to}`).join('、')}\n` : ''}${citeCheck.mismatches.filter((m) => !m.fixed).length ? `- ⚠ 需人工核對：${citeCheck.mismatches.filter((m) => !m.fixed).map((m) => `${m.inText} vs [${m.refYears.join('/')}]`).join('、')}\n` : ''}` : ''}${qFix && qFix.surgeries ? `\n## 二級品質手術（8.2，CoLA < ${qFix.threshold}）\n\n${qFix.list.map((s) => `- 「${s.before}」→「${s.after}」`).join('\n')}\n` : ''}
 ${formCheck ? `\n## form 檢查\n\n引用 ${formCheck.citations} 個 / 數字 ${formCheck.numbers} 個：${formCheck.missingCitations.length || formCheck.missingNumbers.length ? `**缺 ${formCheck.missingCitations.length} 引用、${formCheck.missingNumbers.length} 數字，需人工核對**` : '全數保留 ✓'}\n` : ''}
 ## A → B
 
