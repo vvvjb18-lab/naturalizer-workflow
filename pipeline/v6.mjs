@@ -139,6 +139,7 @@ async function main() {
 
   const input = path.resolve(args._[0]);
   if (!fs.existsSync(input)) { console.error(`找不到原稿：${input}`); process.exit(1); }
+  const T0 = Date.now();
   const ext = path.extname(input).toLowerCase();
   const isDocx = ext === '.docx';
   const outDir = path.resolve(args.k['out-dir'] || path.dirname(input));
@@ -167,14 +168,20 @@ async function main() {
     const droppedTitles = [];
     const langPre = detectLang(Object.values(plan.targets).map((t) => t.units.map((u) => u.text).join(' ')).join('\n')) === 'zh' ? 'zh' : 'en';
     if (langPre === 'en') {
-      for (const i of Object.keys(plan.targets)) {
+      const targetKeys = Object.keys(plan.targets);
+      for (const i of targetKeys) {
         const t = plan.targets[i].units.map((u) => u.text).join(' ');
-        if (wordCount(t, 'en') <= 9 && !/[.!?]["']?\s*$/.test(t.trim()) && !citationsIn(t).length) {
+        const wc = wordCount(t, 'en');
+        const shortTitle = wc <= 9 && !/[.!?]["']?\s*$/.test(t.trim()) && !citationsIn(t).length;
+        // 8.6: first paragraph = title + assignment prompt glued ("...which do
+        // you think is more efficient?") — hz mangles it; deliver untouched.
+        const headerPrompt = i === targetKeys[0] && wc <= 45 && t.includes('?') && !citationsIn(t).length;
+        if (shortTitle || headerPrompt) {
           droppedTitles.push(i);
           delete plan.targets[i];
         }
       }
-      if (droppedTitles.length) console.log(`  標題保護：${droppedTitles.map((i) => `p${i}`).join(',')} 不改寫（≤9 詞無句號）`);
+      if (droppedTitles.length) console.log(`  標題保護：${droppedTitles.map((i) => `p${i}`).join(',')} 不改寫`);
     }
     const targetIdx = Object.keys(plan.targets);
     if (!targetIdx.length) throw new Error('plan 沒有可改寫的段落（全是標題／引用／短段？）');
@@ -207,6 +214,28 @@ async function main() {
       return idx;
     };
 
+    // 8.7: document profile at plan time — one daemon call decides the whole
+    // run's shape. Extreme docs (original ≈ pure LM) skip the candidate
+    // ceremony: 3 candidates, sentence-mode-first grind, convergence stop.
+    // This is the runtime budget for the 99% self-service flow.
+    const tProfile0 = Date.now();
+    const [origProfile] = await scoreTexts([originalProse]);
+    const profile = {
+      gen: origProfile?.p_ai_gen ?? null,
+      extreme: (origProfile?.p_ai_gen ?? 0) > 0.8,
+      mid: (origProfile?.p_ai_gen ?? 0) > 0.4 && (origProfile?.p_ai_gen ?? 0) <= 0.8,
+    };
+    let candidatesN = cfg.candidates;
+    if (profile.extreme) {
+      candidatesN = Math.min(cfg.candidates, cfg.extremePath?.candidates ?? 3);
+      cfg.grind = { ...cfg.grind, roundsExtreme: cfg.extremePath?.rounds ?? 15 };
+      console.log(`  文檔畫像：極端（原稿 gen ${fmt(profile.gen, 2)}）→ 極速路徑（${candidatesN} 候選、句級優先研磨 15 輪、收斂即停）`);
+    } else if (profile.mid) {
+      candidatesN = Math.min(cfg.candidates, cfg.extremePath?.candidatesMid ?? 4);
+      console.log(`  文檔畫像：中度（原稿 gen ${fmt(profile.gen, 2)}）→ 4 候選`);
+    }
+    profile.elapsedMs = Date.now() - tProfile0;
+
     // per-paragraph stats for crossover (uses memo → cheap)
     const paraStatsFor = async (cands) => {
       const out = {};
@@ -232,13 +261,13 @@ async function main() {
     };
 
     // 2 ── generate candidates (adaptive early-stop) ───────────────────────
-    console.log(`=== 2/7 候選生成（K≤${cfg.candidates}${useAdaptive ? `，先 ${cfg.adaptiveFirst ?? 3} 個早停` : ''}）===`);
+    console.log(`=== 2/7 候選生成（K≤${candidatesN}${useAdaptive ? `，先 ${cfg.adaptiveFirst ?? 3} 個早停` : ''}）===`);
     const candidates = [];
     const stopCheck = async () => !useAdaptive
       ? false
       : candidates.length >= (cfg.adaptiveFirst ?? 3)
         && shouldStopEarly(candidates, { formMode: docType.form, target: cfg.target, cvBand: cfg.filters.cvBand, genGate: gc.genGate });
-    for (let k = 0; k < cfg.candidates; k++) {
+    for (let k = 0; k < candidatesN; k++) {
       const sampling = cfg.samplings[k] || { temperature: 1.0, topP: 0.95 };
       console.log(`  candidate ${k + 1}/${cfg.candidates} (temp ${sampling.temperature}, top_p ${sampling.topP})`);
       const gen = await generateCandidate({
@@ -564,6 +593,7 @@ async function main() {
       const { paras: ground, stats: gstats } = await grindParas({
         origParas, paras: parasIn, lang,
         rounds: roundsN, worst: worstN, gain: gc.gain, dryStop,
+        extreme: profile.extreme,
         log: (m) => console.log(`  ${m}`),
       });
       const newProse = ground.join('\n\n');
@@ -927,6 +957,7 @@ ${formCheck ? `\n## form 檢查\n\n引用 ${formCheck.citations} 個 / 數字 ${
       fs.copyFileSync(bDocx, finalCopy);
       console.log(`交付檔：${finalCopy}`);
     }
+    console.log(`總耗時：${Math.round((Date.now() - T0) / 1000)}s（畫像 ${Math.round((profile.elapsedMs || 0) / 1000)}s）`);
   } finally {
     await closeDetector().catch(() => {});
   }

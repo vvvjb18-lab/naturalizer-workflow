@@ -17,6 +17,12 @@
   "worst": 3,
   "gain": 0.02
  },
+ "extremePath": {
+  "_desc": "8.7：原稿 gen>0.8 時的極速路徑——3 候選（生成不是瓶頸，研磨才是）、句級優先研磨 15 輪、收斂即停（連續兩輪總增益 <0.02）。目標：一鍵 ≤60 分鐘。",
+  "candidates": 3,
+  "rounds": 15,
+  "candidatesMid": 4
+ },
  "similarityPolish": {
   "_desc": "8.2：重生最 stock（逐句 ppl 最低）的句子壓查重——查重是與網路的 n-gram 重疊，意外用詞能打散指紋。驗收：整份留在送檢帶（gen/傷率/CV/引用）。",
   "enabled": true,

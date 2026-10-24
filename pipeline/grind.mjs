@@ -12,7 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { completeUnit, validateUnit, cloakNumbers, nliPairs, grammarScores } from './candidates.mjs';
-import { splitSentences } from '../polish/src/text.mjs';
+import { splitSentences, tokenSet, jaccard, wordCount } from '../polish/src/text.mjs';
 import { scoreTexts, closeDetector } from './detector_client.mjs';
 
 const DEFAULT_TEMPS = [1.0, 1.15, 0.9, 1.05];
@@ -23,30 +23,71 @@ const DEFAULT_TEMPS = [1.0, 1.15, 0.9, 1.05];
 // sentence at a time: regen the most AI-flavored (highest per-sentence tmr)
 // sentences individually, accept only strict improvements, verify the whole
 // paragraph against the original once at the end.
+const ACADEMIC_SENT_INSTR = 'Rewrite this sentence in an academic register: no contractions, no second person, no rhetorical questions, no sentence fragments, no spoken fillers. Keep the original meaning and all facts exactly.';
+
+// 8.6: register & structure guards — QA on the 0.649 assault text caught
+// colloquial openers ("So I guess", "Oh, and"), second person, "E.g./etc.",
+// fragments ("As an example, e-commerce.") and thesis duplicates. All are
+// deterministic rejects measured against the sentence being rewritten.
+function styleGuard(before, cand, restSents, lang = 'en') {
+  const c = String(cand).trim();
+  if (/^(so|oh|well|and|but|also|maybe|perhaps|then|now)[, ]/i.test(c)) return 'colloquial opener';
+  if (/\b(you|your)\b/i.test(c) && !/\b(you|your)\b/i.test(before)) return 'second person';
+  if (/\b(e\.g\.|i\.e\.|etc\.|i guess|i think)\b/i.test(c) && !/\b(e\.g\.|i\.e\.|etc\.)\b/i.test(before)) return 'informal marker';
+  if (/\?\s*$/.test(c) && !before.includes('?')) return 'rhetorical question';
+  if (!/[.!?]["']?\s*$/.test(c)) return 'no terminal punctuation';
+  const newSents = splitSentences(c, lang).map((s) => s.text);
+  if (newSents.some((s) => s.trim().split(/\s+/).filter(Boolean).length < 4)) return 'fragment';
+  for (const cs of newSents) {
+    for (const r of restSents) {
+      const A = tokenSet(cs, lang);
+      const B = tokenSet(r, lang);
+      if (A.size < 5 || B.size < 5) continue;
+      let shared = 0;
+      for (const w of A) if (B.has(w)) shared++;
+      if (shared / Math.min(A.size, B.size) >= 0.75) return 'duplicate of a neighbour';
+    }
+  }
+  return null;
+}
+
 async function sentenceModeRegen({ paras, idx, origParas, lang = 'en', maxSents = 5, log = () => {} }) {
-  const { wordCount: wc } = await import('../polish/src/text.mjs');
   const backup = paras[idx];
   const sents = splitSentences(paras[idx], lang);
   if (sents.length < 3) return false;
+  const origSents = origParas[idx] ? splitSentences(origParas[idx], lang).map((s) => s.text) : [];
   const grams = await grammarScores(sents.map((s) => s.text));
   const tmrs = await scoreTexts(sents.map((s) => s.text));
   const targets = sents
     .map((s, i) => ({ s, i, gram: grams[i], tmr: tmrs[i]?.p_ai_gen ?? 1 }))
-    .filter((x) => wc(x.s.text, lang) >= 8)
+    .filter((x) => wordCount(x.s.text, lang) >= 8)
     .sort((a, b) => b.tmr - a.tmr)
     .slice(0, maxSents);
   let changed = 0;
   for (const t of [...targets].sort((a, b) => b.s.start - a.s.start)) {
+    // 8.6: map to the original sentence for per-sentence meaning-drift NLI —
+    // paragraph-level NLI is diluted on long paragraphs and missed drifts.
+    let origSent = null, bestSim = 0;
+    for (const os of origSents) {
+      const sim = jaccard(tokenSet(t.s.text, lang), tokenSet(os, lang));
+      if (sim > bestSim) { bestSim = sim; origSent = os; }
+    }
     let done = false;
     for (let attempt = 0; attempt < 2 && !done; attempt++) {
       try {
         const { cloaked, restore } = cloakNumbers(t.s.text);
-        const cand = restore(await completeUnit({ text: cloaked, sampling: { temperature: 0.9, topP: 0.95 } }));
+        const cand = restore(await completeUnit({ text: cloaked, sampling: { temperature: 0.9, topP: 0.95 }, instruction: ACADEMIC_SENT_INSTR }));
         const v = validateUnit(t.s.text, cand, lang);
         if (!v.ok) { log(`    s${t.i + 1} rejected (${v.reason})`); continue; }
+        const guard = styleGuard(t.s.text, cand, sents.filter((x) => x.start !== t.s.start).map((x) => x.text), lang);
+        if (guard) { log(`    s${t.i + 1} rejected (${guard})`); continue; }
         const candSents = splitSentences(cand, lang).map((s) => s.text);
         const cgrams = await grammarScores(candSents);
         if (cgrams.some((g) => g < 0.75)) { log(`    s${t.i + 1} ungrammatical`); continue; }
+        if (origSent && bestSim >= 0.15) {
+          const [pair] = await nliPairs([[origSent, cand]]);
+          if (pair && pair.contradict > 0.5) { log(`    s${t.i + 1} NLI reject (meaning drift)`); continue; }
+        }
         const [ct] = await scoreTexts([cand]);
         if ((ct?.p_ai_gen ?? 1) >= t.tmr - 0.02) { log(`    s${t.i + 1}: tmr ${t.tmr.toFixed(2)} → ${(ct?.p_ai_gen ?? 1).toFixed(2)}, no gain`); continue; }
         paras[idx] = paras[idx].slice(0, t.s.start) + cand + paras[idx].slice(t.s.end);
@@ -73,10 +114,10 @@ async function sentenceModeRegen({ paras, idx, origParas, lang = 'en', maxSents 
 
 export async function grindParas({
   origParas, paras, lang = 'en',
-  rounds = 3, worst = 3, gain = 0.02, gate = 0.08, gramCheck = 0.5, dryStop = 1,
+  rounds = 3, worst = 3, gain = 0.02, gate = 0.08, gramCheck = 0.5, dryStop = 1, extreme = false,
   temps = DEFAULT_TEMPS, log = () => {},
 }) {
-  const stats = { roundsRun: 0, attempts: 0, accepted: 0, noGain: 0, rejected: 0, failed: 0, paraDeltas: {}, dryRounds: 0 };
+  const stats = { roundsRun: 0, attempts: 0, accepted: 0, noGain: 0, rejected: 0, failed: 0, paraDeltas: {}, dryRounds: 0, totalGain: 0, weakRounds: 0 };
   const out = [...paras];
   const paraScores = async (ps) => (await scoreTexts(ps)).map((s) => s.p_ai_gen ?? 1);
 
@@ -90,11 +131,16 @@ export async function grindParas({
     if (!targets.length) { log(`round ${r}: all paragraphs ≤${gate}, done`); break; }
     log(`round ${r}: worst = ${targets.map((w) => `p${w.i + 1}(${w.s.toFixed(2)})`).join(' ')}`);
     let acceptedAny = false;
+    let roundGain = 0;
     for (const w of targets) {
       const p = out[w.i];
       let improved = false;
       let sawUngrammatical = false;
-      for (let attempt = 0; attempt < temps.length && !improved; attempt++) {
+      // 8.7: extreme docs — paragraph regen at grind temps shatters ~always
+      // (run84/run2 data), each failed attempt burns ~45s. One attempt only,
+      // then straight to sentence mode.
+      const attemptsN = extreme ? 1 : temps.length;
+      for (let attempt = 0; attempt < attemptsN && !improved; attempt++) {
         stats.attempts++;
         try {
           const { cloaked, restore } = cloakNumbers(p);
@@ -122,6 +168,7 @@ export async function grindParas({
             log(`  p${w.i + 1}: ${w.s.toFixed(3)} -> ${s2.toFixed(3)} ✓`);
             out[w.i] = candidate;
             improved = true; acceptedAny = true; stats.accepted++;
+            roundGain += w.s - s2;
             stats.paraDeltas[w.i] = { before: Number(w.s.toFixed(3)), after: Number(s2.toFixed(3)) };
           } else {
             stats.noGain++;
@@ -135,13 +182,24 @@ export async function grindParas({
       // 8.4: paragraph regen keeps shattering → drop to per-sentence attacks
       if (!improved && sawUngrammatical) {
         log(`  p${w.i + 1}: paragraph regen shatters, trying sentence mode`);
+        const before = await scoreTexts([out[w.i]]);
         if (await sentenceModeRegen({ paras: out, idx: w.i, origParas, lang, log })) {
           improved = true; acceptedAny = true; stats.accepted++;
           const [sc] = await scoreTexts([out[w.i]]);
-          stats.paraDeltas[w.i] = { before: Number(w.s.toFixed(3)), after: Number((sc?.p_ai_gen ?? 1).toFixed(3)) };
+          const after = sc?.p_ai_gen ?? 1;
+          roundGain += Math.max(0, (before[0]?.p_ai_gen ?? 1) - after);
+          stats.paraDeltas[w.i] = { before: Number(w.s.toFixed(3)), after: Number(after.toFixed(3)) };
         }
       }
     }
+    stats.totalGain += roundGain;
+    // 8.7: convergence stop — two consecutive low-gain rounds mean the rest
+    // is stubborn register wall; more rounds burn runtime without results.
+    if (roundGain < 0.02) {
+      stats.weakRounds++;
+      log(`  round ${r}: total gain ${roundGain.toFixed(3)} (${stats.weakRounds}/2 weak)`);
+      if (stats.weakRounds >= 2) { log('  收斂：連續兩輪增益不足，停止研磨'); break; }
+    } else stats.weakRounds = 0;
     if (!acceptedAny) {
       stats.dryRounds++;
       log(`round ${r}: no paragraph improved (${stats.dryRounds}/${dryStop} dry)`);
