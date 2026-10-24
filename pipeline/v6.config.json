@@ -17,6 +17,16 @@
   "worst": 3,
   "gain": 0.02
  },
+ "similarityPolish": {
+  "_desc": "8.2：重生最 stock（逐句 ppl 最低）的句子壓查重——查重是與網路的 n-gram 重疊，意外用詞能打散指紋。驗收：整份留在送檢帶（gen/傷率/CV/引用）。",
+  "enabled": true,
+  "worst": 3
+ },
+ "qualitySurgery": {
+  "_desc": "8.2：二級品質手術——CoLA 0.5 放行但 0.7 不過的彆扭句（massive amount of free sugars 類），從原句重生、NLI 守門。",
+  "threshold": 0.7,
+  "maxSentences": 4
+ },
  "wordBudget": {
   "_desc": "7.6：enabled=true 時交付前執行字數預算（刪除優先、超配額段才定向壓縮、全程 validateUnit+NLI）。maxWords 必填；floorWords 選填下限；maxCutRatio 超過即拒絕（--force-budget 覆蓋）。CLI --max-words/--floor-words/--force-budget 覆蓋此處。",
   "enabled": false,
@@ -79,7 +89,8 @@
   "maxGrammarDamage": 0.08,
   "minGrammarDamage": 0,
   "maxShortSentenceDensity": 0.45,
-  "maxCopyRate": 0.6
+  "maxCopyRate": 0.6,
+  "minEntail": 0.6
  },
  "editLensDeltaAdvisory": 0.1,
  "polishCvRetention": 1.0

@@ -85,14 +85,17 @@ export async function grindParas({
   return { paras: out, stats };
 }
 
-// ── 8.1: NLI rescue ─────────────────────────────────────────────────────────
-// A candidate with one contradicting paragraph used to be skipped whole. Here
-// only the offending paragraphs are regenerated (same guards as grind:
+// ── 8.1/8.2: NLI rescue ─────────────────────────────────────────────────────
+// A candidate with contradicting or content-losing paragraphs used to be
+// skipped whole. Here only the offending paragraphs are regenerated (guards:
 // validateUnit + per-sentence CoLA + NLI vs the original paragraph) and the
 // caller re-verifies the whole candidate afterwards.
+// badIdx entries: paragraph indices. Acceptance: contradict ≤ maxContradict;
+// when minEntail > 0 also entail ≥ minEntail (content-loss rescue).
 export async function rescueContradictions({
   origParas, paras, badIdx, lang = 'en',
-  tries = 3, gramCheck = 0.5, temps = DEFAULT_TEMPS, log = () => {},
+  tries = 3, gramCheck = 0.5, maxContradict = 0.5, minEntail = 0,
+  temps = DEFAULT_TEMPS, log = () => {},
 }) {
   const out = [...paras];
   const fixed = {};
@@ -115,7 +118,9 @@ export async function rescueContradictions({
         }
         if (origParas[i]) {
           const [pair] = await nliPairs([[origParas[i], candidate]]);
-          if (pair && pair.contradict > 0.5) { log(`  rescue p${i + 1} attempt ${t + 1} still contradicts (${pair.contradict.toFixed(2)})`); continue; }
+          const badC = pair && pair.contradict > maxContradict;
+          const badE = minEntail > 0 && pair && (pair.entail ?? 1) < minEntail;
+          if (badC || badE) { log(`  rescue p${i + 1} attempt ${t + 1} still fails NLI (contradict ${(pair?.contradict ?? 0).toFixed(2)}, entail ${(pair?.entail ?? 0).toFixed(2)})`); continue; }
         }
         out[i] = candidate;
         fixed[i] = true;
@@ -127,6 +132,78 @@ export async function rescueContradictions({
     }
   }
   return { paras: out, fixed };
+}
+
+// ── 8.2: similarity polish ──────────────────────────────────────────────────
+// Similarity (查重) is stock-phrase overlap: predictable wording matches the
+// web's. Calibration: the ppl-30.5 delivery scored 13% similarity, the
+// ppl-24.9 one 22%. Here the LEAST surprising sentences (lowest per-sentence
+// ppl = most stock) are regenerated to raise their unpredictability, behind
+// the usual guards. Facts/citations are left alone; acceptance per sentence
+// is "new ppl strictly higher"; the caller verifies the whole text stays in
+// the delivery band afterwards.
+export async function similarityPolish({
+  origParas, paras, lang = 'en',
+  worst = 3, tries = 2, minWords = 10, gramCheck = 0.5,
+  temps = DEFAULT_TEMPS, log = () => {},
+}) {
+  const ss = splitSentences;
+  const out = [...paras];
+  const sentPpl = async (s) => (await scoreTexts([s]))[0]?.perplexity ?? null;
+  const flat = [];
+  out.forEach((p, pi) => {
+    ss(p, lang).forEach((s, si) => {
+      if (wordCountOk(s.text, lang, minWords) && !s.text.includes('(')) flat.push({ pi, si, text: s.text });
+    });
+  });
+  for (const f of flat) f.ppl = await sentPpl(f.text);
+  const targets = flat.filter((f) => f.ppl != null).sort((a, b) => a.ppl - b.ppl).slice(0, worst);
+  if (!targets.length) { log('similarity: no eligible stock sentences'); return { paras: out, stats: { attempts: 0, accepted: 0, moves: [] } }; }
+  log(`similarity: stock sentences = ${targets.map((t) => `p${t.pi + 1}s${t.si + 1}(${t.ppl.toFixed(0)})`).join(' ')}`);
+  const stats = { attempts: 0, accepted: 0, moves: [] };
+  for (const t of targets) {
+    let done = false;
+    for (let attempt = 0; attempt < tries && !done; attempt++) {
+      stats.attempts++;
+      try {
+        const { cloaked, restore } = cloakNumbers(t.text);
+        const candidate = restore(await completeUnit({ text: cloaked, sampling: { temperature: temps[attempt % temps.length], topP: 0.95 } }));
+        const v = validateUnit(t.text, candidate, lang);
+        if (!v.ok) { log(`  p${t.pi + 1}s${t.si + 1}: rejected (${v.reason})`); continue; }
+        if (gramCheck > 0) {
+          const sents = ss(candidate, lang).map((s) => s.text);
+          const grams = await grammarScores(sents);
+          if (grams.some((g) => g < gramCheck)) { log(`  p${t.pi + 1}s${t.si + 1}: ungrammatical`); continue; }
+        }
+        if (origParas[t.pi]) {
+          const [pair] = await nliPairs([[origParas[t.pi], replaceSentence(out[t.pi], t.si, candidate, lang)]]);
+          if (pair && pair.contradict > 0.5) { log(`  p${t.pi + 1}s${t.si + 1}: NLI reject`); continue; }
+        }
+        const newPpl = await sentPpl(candidate);
+        if (newPpl == null || newPpl <= t.ppl) { log(`  p${t.pi + 1}s${t.si + 1}: ppl ${(t.ppl).toFixed(0)} → ${(newPpl ?? 0).toFixed(0)}, no gain`); continue; }
+        out[t.pi] = replaceSentence(out[t.pi], t.si, candidate, lang);
+        stats.accepted++;
+        stats.moves.push({ para: t.pi, sent: t.si, pplBefore: Number(t.ppl.toFixed(0)), pplAfter: Number(newPpl.toFixed(0)) });
+        log(`  p${t.pi + 1}s${t.si + 1}: ppl ${t.ppl.toFixed(0)} → ${newPpl.toFixed(0)} ✓`);
+        done = true;
+      } catch (e) {
+        log(`  p${t.pi + 1}s${t.si + 1} failed: ${e.message.slice(0, 80)}`);
+      }
+    }
+  }
+  return { paras: out, stats };
+}
+
+function wordCountOk(text, lang, min) {
+  const n = String(text).trim().split(/\s+/).filter(Boolean).length;
+  return n >= min;
+}
+
+function replaceSentence(para, si, replacement, lang) {
+  const sents = splitSentences(para, lang);
+  const s = sents[si];
+  if (!s) return para;
+  return para.slice(0, s.start) + replacement + para.slice(s.end);
 }
 
 // ── CLI wrapper (standalone use; v6.mjs calls grindParas directly) ─────────

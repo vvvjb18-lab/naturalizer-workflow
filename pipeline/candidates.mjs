@@ -504,10 +504,59 @@ export function mechanicalPolish(text, lang = 'en') {
     t = t.replace(/(\([^()]{0,80}?\d{4}[^()]*?\))\s+(?='[A-Z]'|\\"[A-Z]\")/g, '$1. ');
     // stray double period after a closing citation
     t = t.replace(/\)\.\./g, ').');
+    // 8.2: nested parens around a citation — "(for the benefit of all, even
+    // if ... (Bandy et al., 2020))." → "for the benefit of all, even if ...
+    // (Bandy et al., 2020)."
+    t = t.replace(/\(([^()]{25,}?)\s*\(([^()]{0,90}?\d{4}[^()]*?)\)\s*\)\s*\./g, '$1 ($2).');
     // space before punctuation
     t = t.replace(/ +([.,;])/g, '$1');
   }
   return t.trim();
+}
+
+// ── 8.2: citation/reference year consistency ───────────────────────────────
+// The pipeline guarantees citations survive verbatim — including when the
+// DRAFT itself has an in-text year that disagrees with the reference list
+// (E2: in-text Colchero et al., 2016 vs references (2017)). This check flags
+// the mismatch and, when the reference list offers exactly one year for that
+// author, safely aligns the in-text citation to it (references are the
+// authority; the replacement touches only the citation paren).
+export function citationConsistency({ paragraphs, prose, lang = 'en', fix = false }) {
+  const citeRe = /\(((?:[A-Z][A-Za-z'’-]+(?:\s+(?:et al\.|and|&|,,,|,))?[^()]{0,80}?),?\s*(\d{4})[a-z]?)\)/g;
+  const inText = [];
+  let m;
+  while ((m = citeRe.exec(String(prose))) !== null) {
+    const surname = m[1].split(/,|\bet al\b/)[0].trim().split(/\s+/)[0];
+    inText.push({ full: m[0], surname, year: m[2], index: m.index });
+  }
+  // reference entries: paragraphs after a References-style heading
+  let inRefs = false;
+  const refYears = {};
+  for (const raw of paragraphs || []) {
+    const p = String(raw || '').trim();
+    if (!p) continue;
+    if (!inRefs && REF_HEAD_RE.test(p)) { inRefs = true; continue; }
+    if (!inRefs) continue;
+    const years = p.match(/\b(?:19|20)\d{2}\b/g) || [];
+    const surname = (p.split(/[(,]/)[0] || '').trim().split(/\s+/)[0];
+    if (surname && years.length) refYears[surname.toLowerCase()] = [...new Set([...(refYears[surname.toLowerCase()] || []), ...years])];
+  }
+  const mismatches = [];
+  let fixedProse = String(prose);
+  const fixes = [];
+  for (const c of inText) {
+    const years = refYears[c.surname.toLowerCase()];
+    if (!years || !years.length || years.includes(c.year)) continue;
+    if (years.length === 1 && fix) {
+      const replacement = c.full.replace(c.year, years[0]);
+      fixedProse = fixedProse.split(c.full).join(replacement);
+      fixes.push({ from: c.full, to: replacement, refYears: years });
+      mismatches.push({ inText: c.full, refYears: years, fixed: true });
+    } else {
+      mismatches.push({ inText: c.full, refYears: years, fixed: false });
+    }
+  }
+  return { checked: inText.length, references: Object.keys(refYears).length, mismatches, prose: fixedProse, fixes };
 }
 
 // ── 8.0: adaptive early stop ────────────────────────────────────────────────
@@ -537,6 +586,7 @@ export function shouldStopEarly(cands, { formMode = false, target = 'balanced', 
 // only behind validateUnit + the NLI gate. Never cuts mid-sentence, never
 // deletes a sentence carrying numbers/citations, never below floorWords.
 const REF_HEAD_RE = /^(references?|reference list|works cited|bibliography|參考文獻|參考資料)\s*:?\s*$/i;
+export { REF_HEAD_RE };
 
 // Every counted paragraph (empty lines and the References block excluded —
 // academic word limits conventionally ignore them).

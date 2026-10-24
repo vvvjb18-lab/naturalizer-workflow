@@ -22,9 +22,9 @@ import {
   generateCandidate, candidateStats, rankCandidates,
   grammarScores, nliPairs, scoreFiles, closeDetector,
   detectDocType, surgicalRepair, assembleCrossover, shouldStopEarly,
-  mechanicalPolish, applyWordBudget, scoreTexts,
+  mechanicalPolish, applyWordBudget, scoreTexts, citationConsistency,
 } from './candidates.mjs';
-import { grindParas, rescueContradictions } from './grind.mjs';
+import { grindParas, rescueContradictions, similarityPolish } from './grind.mjs';
 import { detectLang, splitSentences, wordCount } from '../polish/src/text.mjs';
 import { factNumbers, citationsIn } from '../polish/src/checks.mjs';
 
@@ -157,6 +157,23 @@ async function main() {
     } else {
       const text = fs.readFileSync(input, 'utf8').trim();
       plan = { paragraphs: [text], targets: { 0: { units: [{ id: 1, text }], joiner: ' ' } }, kept: {} };
+    }
+    // 8.2: titles are never rewritten — hz turns a short title into a glued
+    // "Title + invented thesis" line (run9: "The Case ... Beverages Taxing
+    // sugary drinks is a good idea."). A target paragraph of ≤9 words with
+    // no sentence-ending punctuation and no citations is a title: deliver it
+    // untouched.
+    const droppedTitles = [];
+    const langPre = detectLang(Object.values(plan.targets).map((t) => t.units.map((u) => u.text).join(' ')).join('\n')) === 'zh' ? 'zh' : 'en';
+    if (langPre === 'en') {
+      for (const i of Object.keys(plan.targets)) {
+        const t = plan.targets[i].units.map((u) => u.text).join(' ');
+        if (wordCount(t, 'en') <= 9 && !/[.!?]["']?\s*$/.test(t.trim()) && !citationsIn(t).length) {
+          droppedTitles.push(i);
+          delete plan.targets[i];
+        }
+      }
+      if (droppedTitles.length) console.log(`  標題保護：${droppedTitles.map((i) => `p${i}`).join(',')} 不改寫（≤9 詞無句號）`);
     }
     const targetIdx = Object.keys(plan.targets);
     if (!targetIdx.length) throw new Error('plan 沒有可改寫的段落（全是標題／引用／短段？）');
@@ -345,46 +362,55 @@ async function main() {
 
     ({ eligible, rejected } = rankCandidates(pool, { weights: cfg.weights, filters: { ...cfg.filters, formMode: docType.form } }));
 
+    // 8.2: evaluate every eligible candidate (NLI + rescues), then choose by
+    // risk with a ppl tie-break — among equal-risk candidates the higher
+    // perplexity one uses less stock phrasing, the offline proxy for Turnitin
+    // similarity (13% @ ppl 30.5 vs 22% @ ppl 24.9, E2 family).
     let chosen = null;
+    const minEntail = cfg.filters?.minEntail ?? 0.6;
+    const passing = [];
     for (const c of eligible) {
+      const cid = c.crossover ? '重組X' : `cand${c.id}`;
       if (lang === 'zh') {
         // NLI cross-encoder is English-only: on zh input it returns garbage
         // entailment scores and blocks clean candidates (C4 lesson).
         c.nli = null;
         console.log('  zh 文稿：NLI 守門跳過（英文模型不適用）');
-        chosen = c;
-        break;
+        passing.push(c);
+        continue;
       }
       const pairs = targetIdx.map((i) => [originalsByPara[i], c.paras[i] || '']);
       let nli = null;
       try {
         nli = await nliPairs(pairs);
       } catch (e) {
-        console.log(`  ${c.id === 'X' ? '重組X' : 'cand' + c.id} NLI 失敗（${e.message}），跳過守門`);
+        console.log(`  ${cid} NLI 失敗（${e.message}），跳過守門`);
         c.nli = null;
-        chosen = c;
-        break;
+        passing.push(c);
+        continue;
       }
       const worst = nli.reduce((a, b) => (b.contradict > a.contradict ? b : a), { contradict: 0 });
       c.nli = { maxContradict: worst.contradict, meanEntail: nli.reduce((a, b) => a + (b.entail || 0), 0) / Math.max(1, nli.length) };
-      console.log(`  ${c.id === 'X' ? '重組X' : 'cand' + c.id} risk=${fmt(c.risk)} NLI: maxContradict=${fmt(worst.contradict)} meanEntail=${fmt(c.nli.meanEntail)}`);
-      if (worst.contradict > 0.5) {
-        // 8.1: targeted rescue — regen only the contradicting paragraphs, then
-        // re-verify the whole candidate. Skipping the candidate whole used to
-        // bury gen-star profiles over one bad paragraph.
-        const badIdx = nli.map((x, j) => ({ x, j })).filter((o) => o.x.contradict > 0.5).map((o) => o.j);
-        const badNames = badIdx.map((j) => `p${targetIdx[j]}`).join(',');
-        console.log(`  ${c.id === 'X' ? '重組X' : 'cand' + c.id} NLI 矛盾過高（${badNames}）→ 定向重生重試`);
+      console.log(`  ${cid} risk=${fmt(c.risk)} NLI: maxContradict=${fmt(worst.contradict)} meanEntail=${fmt(c.nli.meanEntail)}`);
+      const badContradict = nli.map((x, j) => ({ x, j })).filter((o) => o.x.contradict > 0.5).map((o) => o.j);
+      const badEntail = nli.map((x, j) => ({ x, j })).filter((o) => (o.x.entail ?? 1) < minEntail).map((o) => o.j);
+      if (badContradict.length || badEntail.length) {
+        // 8.1/8.2: targeted rescue — regen only the offending paragraphs
+        // (contradiction or content loss), then re-verify the whole candidate.
+        const badIdx = [...new Set([...badContradict, ...badEntail])];
+        const badNames = badIdx.map((j) => `p${targetIdx[j]}${badContradict.includes(j) ? '(矛盾)' : '(內容損失)'}`).join(',');
+        console.log(`  ${cid} NLI 未過（${badNames}）→ 定向重生重試`);
         const origParasR = targetIdx.map((i) => originalsByPara[i] || '');
         const parasR = targetIdx.map((i) => c.paras[i] || originalsByPara[i] || '');
         const { paras: rescued, fixed } = await rescueContradictions({
-          origParas: origParasR, paras: parasR, badIdx, lang,
+          origParas: origParasR, paras: parasR, badIdx, lang, minEntail,
           log: (m) => console.log(`    ${m}`),
         });
         if (Object.keys(fixed).length === badIdx.length) {
           const nli2 = await nliPairs(targetIdx.map((_, j) => [origParasR[j], rescued[j]]));
           const worst2 = nli2.reduce((a, b) => (b.contradict > a.contradict ? b : a), { contradict: 0 });
-          if (worst2.contradict <= 0.5) {
+          const weak2 = nli2.some((x) => (x.entail ?? 1) < minEntail);
+          if (worst2.contradict <= 0.5 && !weak2) {
             targetIdx.forEach((i, j) => { c.paras[i] = rescued[j]; });
             c.prose = targetIdx.map((i) => c.paras[i]).filter(Boolean).join('\n\n');
             const newStats = candidateStats({ originalProse, prose: c.prose, lang });
@@ -395,21 +421,47 @@ async function main() {
             if (rs) c.score = { ...c.score, p_ai_gen: rs.p_ai_gen, p_ai_edit: rs.p_ai_edit, perplexity: rs.perplexity };
             c.nli = { maxContradict: worst2.contradict, meanEntail: nli2.reduce((a, b) => a + (b.entail || 0), 0) / Math.max(1, nli2.length) };
             c.rescued = badIdx.map((j) => targetIdx[j]);
-            console.log(`  ${c.id === 'X' ? '重組X' : 'cand' + c.id} 救援成功：maxContradict ${fmt(worst.contradict)} → ${fmt(worst2.contradict)}，gen=${fmt(c.score?.p_ai_gen)}`);
-            chosen = c;
-            break;
+            console.log(`  ${cid} 救援成功：maxContradict ${fmt(worst.contradict)} → ${fmt(worst2.contradict)}，gen=${fmt(c.score?.p_ai_gen)}`);
+            passing.push(c);
+            continue;
           }
-          console.log(`  ${c.id === 'X' ? '重組X' : 'cand' + c.id} 救援後仍矛盾（${fmt(worst2.contradict)}），換下一個`);
+          console.log(`  ${cid} 救援後仍未過（maxContradict ${fmt(worst2.contradict)}），淘汰`);
         } else {
-          console.log(`  ${c.id === 'X' ? '重組X' : 'cand' + c.id} 救援未修復全部矛盾段，換下一個`);
+          console.log(`  ${cid} 救援未修復全部問題段，淘汰`);
         }
         continue;
       }
-      chosen = c;
-      break;
+      passing.push(c);
     }
-    if (!chosen) throw new Error('所有 eligible 候選都被 NLI 擋下');
+    if (!passing.length) throw new Error('所有 eligible 候選都被 NLI 擋下');
+    passing.sort((a, b) => a.risk - b.risk);
+    const bestRisk = passing[0];
+    const tie = passing.filter((c) => c.risk - bestRisk.risk <= 0.02);
+    chosen = tie.length > 1
+      ? tie.reduce((a, b) => ((b.score?.perplexity ?? 0) > (a.score?.perplexity ?? 0) ? b : a))
+      : bestRisk;
+    if (tie.length > 1) console.log(`  平手抉選（risk 差 ≤0.02，${tie.length} 候選）：選 ppl 較高者壓查重`);
     console.log(`  → 選定 ${chosen.crossover ? '重組 X' : `cand${chosen.id}`}`);
+
+    // 8.2: citation/reference year consistency — the pipeline preserves
+    // citations verbatim, including the DRAFT's own in-text vs References
+    // year mismatches. References is the authority; align when unambiguous,
+    // flag for manual review otherwise.
+    let citeCheck = null;
+    if (lang === 'en') {
+      citeCheck = citationConsistency({ paragraphs: plan.paragraphs, prose: chosen.prose, fix: true });
+      if (citeCheck.fixes.length) {
+        for (const f of citeCheck.fixes) {
+          for (const i of Object.keys(chosen.paras)) {
+            if (chosen.paras[i].includes(f.from)) { chosen.paras[i] = chosen.paras[i].split(f.from).join(f.to); break; }
+          }
+        }
+        chosen.prose = targetIdx.map((i) => chosen.paras[i]).filter(Boolean).join('\n\n');
+        console.log(`  引用年份對齊：${citeCheck.fixes.map((f) => `${f.from} → ${f.to}`).join('、')}（以 References 為準）`);
+      } else if (citeCheck.mismatches.length) {
+        console.log(`  ⚠ 引用年份不一致（需人工核對）：${citeCheck.mismatches.map((m) => `${m.inText} vs [${m.refYears.join('/')}]`).join('、')}`);
+      }
+    }
 
     // 5.5 ── 8.0: automatic paragraph grind ─────────────────────────────────
     // Calibration: gen ≤ 0.05 → <20%; ≤0.10 is the submission gate. If the
@@ -466,6 +518,53 @@ async function main() {
       }
     }
 
+    // 5.6 ── 8.2: similarity polish — regen the most stock (lowest per-
+    // sentence ppl) sentences to raise their unpredictability. Turnitin
+    // similarity is n-gram overlap with the web; surprising wording breaks
+    // the fingerprint while the guards keep facts, citations and meaning.
+    // Whole-text acceptance: stay inside the delivery band, else revert.
+    let simInfo = null;
+    const sp = { enabled: cfg.similarityPolish?.enabled !== false, worst: cfg.similarityPolish?.worst ?? 3 };
+    if (docType.form || !sp.enabled || lang !== 'en') {
+      simInfo = { action: 'skipped', reason: docType.form ? 'form mode' : (!sp.enabled ? 'disabled' : 'lang') };
+    } else {
+      console.log(`=== 5.6/7 查重打磨（重生最 stock 的 ${sp.worst} 句，帶內驗收）===`);
+      const preScore = chosen.score;
+      const idxList = targetIdx;
+      const origParas = idxList.map((i) => originalsByPara[i] || '');
+      const parasIn = idxList.map((i) => chosen.paras[i] || originalsByPara[i] || '');
+      const { paras: polished, stats: sstats } = await similarityPolish({
+        origParas, paras: parasIn, lang, worst: sp.worst,
+        log: (m) => console.log(`  ${m}`),
+      });
+      if (!sstats.accepted) {
+        simInfo = { action: 'no-op', reason: '0 句改善', stats: sstats };
+        console.log('  查重打磨無句改善，文本不變');
+      } else {
+        const newProse = polished.join('\n\n');
+        const [sc2] = await scoreTexts([newProse]);
+        const dmg2 = await damageOf(newProse);
+        const st2 = candidateStats({ originalProse, prose: newProse, lang });
+        const bandLo = (cfg.filters?.cvBand?.[0] ?? 0.45) * 0.9;
+        const maxDmg2 = cfg.filters?.maxGrammarDamage ?? 0.08;
+        const bandOk = (sc2?.p_ai_gen ?? 1) <= gc.genGate && dmg2 <= maxDmg2 && (st2.cv === 0 || st2.cv >= bandLo)
+          && citationsIn(newProse).length >= citationsIn(chosen.prose).length;
+        if (!bandOk) {
+          simInfo = { action: 'reverted', reason: '帶外（gen/傷率/CV/引用）', stats: sstats };
+          console.log('  ⚠ 查重打磨後出帶 → 回退');
+        } else {
+          idxList.forEach((i, j) => { chosen.paras[i] = polished[j]; });
+          chosen.prose = newProse;
+          chosen.grammarDamage = dmg2;
+          chosen.score = { ...chosen.score, p_ai_gen: sc2?.p_ai_gen, p_ai_edit: sc2?.p_ai_edit ?? chosen.score?.p_ai_edit, perplexity: sc2?.perplexity ?? chosen.score?.perplexity };
+          st2.coverage = chosen.stats.coverage;
+          chosen.stats = st2;
+          simInfo = { action: 'applied', pplBefore: preScore?.perplexity ?? null, pplAfter: sc2?.perplexity ?? null, stats: sstats };
+          console.log(`  查重打磨採用：${sstats.accepted} 句，整份 ppl ${fmt(preScore?.perplexity, 1)} → ${fmt(sc2?.perplexity, 1)}，gen ${fmt(chosen.score?.p_ai_gen)}`);
+        }
+      }
+    }
+
     // form-mode citation/number summary (7.0: 四維承諾補全)
     let formCheck = null;
     if (docType.form) {
@@ -518,6 +617,42 @@ async function main() {
         budgetStats.cvWarn = Number(newStats.cv.toFixed(3));
         console.log(`  ⚠ 壓縮後 CV ${fmt(newStats.cv, 3)} 低於安全帶下限 ${fmt(cvFloor, 3)}——交付前建議人工覆核節奏`);
       }
+    }
+
+    // 5.7 ── 8.2: tier-2 quality surgery — sentences CoLA passes at 0.5 but
+    // fails at 0.7 read awkward ("massive amount of free sugars" class).
+    // Regenerate the worst few from their original sentences (same machinery
+    // as step 4), then NLI-guard each changed paragraph and revert any drift.
+    let qFix = null;
+    const q = cfg.qualitySurgery ?? {};
+    if (!docType.form && q.threshold) {
+      console.log(`=== 5.7/7 二級品質手術（CoLA < ${q.threshold}，最多 ${q.maxSentences ?? 4} 句）===`);
+      const preT2 = { ...chosen.paras };
+      const repaired = await surgicalRepair({
+        paras: chosen.paras, originalsByPara, lang,
+        cfg: { grammarThreshold: q.threshold, surgeryTries: 2, maxSurgeries: q.maxSentences ?? 4 },
+        scorer: scoreSents, log: (m) => console.log(`  ${m}`),
+      });
+      const changed = Object.keys(repaired.paras).filter((i) => repaired.paras[i] !== chosen.paras[i]);
+      const reverted = [];
+      for (const i of changed) {
+        const [pair] = await nliPairs([[originalsByPara[i] || '', repaired.paras[i]]]);
+        if (pair && pair.contradict > 0.5) { repaired.paras[i] = preT2[i]; reverted.push(i); }
+      }
+      if (changed.length > reverted.length) {
+        chosen.paras = repaired.paras;
+        chosen.prose = targetIdx.map((i) => chosen.paras[i]).filter(Boolean).join('\n\n');
+        chosen.grammarDamage = await damageOf(chosen.prose);
+        const st3 = candidateStats({ originalProse, prose: chosen.prose, lang });
+        st3.coverage = chosen.stats.coverage;
+        chosen.stats = st3;
+      }
+      qFix = {
+        threshold: q.threshold, surgeries: repaired.surgeries.filter((s) => !reverted.includes(String(s.para))).length,
+        list: repaired.surgeries.filter((s) => !reverted.includes(String(s.para))).map((s) => ({ before: s.before.slice(0, 60), after: s.after.slice(0, 60) })),
+        reverted,
+      };
+      console.log(`  二級手術：${qFix.surgeries} 句修正${reverted.length ? `（${reverted.length} 句 NLI 回退）` : ''}`);
     }
 
     // 7.1: deterministic punctuation/quote pass (citation period placement,
@@ -665,6 +800,9 @@ async function main() {
       cvGuard, formCheck,
       budget: budgetStats,
       grind: grindInfo,
+      similarityPolish: simInfo,
+      citationCheck: citeCheck ? { checked: citeCheck.checked, references: citeCheck.references, mismatches: citeCheck.mismatches, fixes: citeCheck.fixes } : null,
+      qualitySurgery: qFix,
       editLensDeltaAdvisory: cfg.editLensDeltaAdvisory ?? 0.1,
       files: { aDocx, aProse, bDocx, bReport },
     };
@@ -685,7 +823,7 @@ async function main() {
 ${rows}
 
 原稿基準：ppl ${fmt(originalScore?.perplexity, 1)} · gen ${fmt(originalScore?.p_ai_gen)} · edit ${fmt(originalScore?.p_ai_edit)} · 語法傷率 ${fmt(origDamage)}
-${budgetStats ? `\n## 字數預算（7.6）\n\n- 上限 ${budgetStats.maxWords}${budgetStats.floorWords != null ? ` · 下限 ${budgetStats.floorWords}` : ''}：**${budgetStats.beforeWords} → ${budgetStats.afterWords} 詞**\n- 刪句 ${budgetStats.deletedSentences}（-${budgetStats.deletedWords} 詞） · 定向壓縮 ${budgetStats.compressedParas} 段${budgetStats.failedCompressions ? ` · 壓縮失敗 ${budgetStats.failedCompressions} 段` : ''}${budgetStats.cutRatio != null ? ` · 削幅 ${(budgetStats.cutRatio * 100).toFixed(0)}%` : ''}\n${budgetStats.cvWarn ? `- ⚠ 壓縮後 CV ${budgetStats.cvWarn} 低於安全帶——建議人工覆核節奏\n` : ''}` : ''}${grindInfo ? `\n## 段級研磨（8.0）\n\n- 動作：**${grindInfo.action === 'applied' ? '採用' : grindInfo.action === 'reverted' ? `回退（${grindInfo.reason}）` : grindInfo.action === 'skipped' ? `跳過（${grindInfo.reason || 'form 模式'}）` : '停用'}**\n${grindInfo.preGen != null ? `- 整份 gen：${fmt(grindInfo.preGen)} → ${fmt(grindInfo.postGen)} · 語法傷率：${fmt(grindInfo.postDamage)}\n` : ''}${grindInfo.stats && grindInfo.stats.attempts ? `- 嘗試 ${grindInfo.stats.attempts}＝採用 ${grindInfo.stats.accepted}＋no-gain ${grindInfo.stats.noGain}＋拒收 ${grindInfo.stats.rejected}${grindInfo.stats.failed ? `＋失敗 ${grindInfo.stats.failed}` : ''} · ${grindInfo.stats.roundsRun} 輪\n` : ''}` : ''}
+${budgetStats ? `\n## 字數預算（7.6）\n\n- 上限 ${budgetStats.maxWords}${budgetStats.floorWords != null ? ` · 下限 ${budgetStats.floorWords}` : ''}：**${budgetStats.beforeWords} → ${budgetStats.afterWords} 詞**\n- 刪句 ${budgetStats.deletedSentences}（-${budgetStats.deletedWords} 詞） · 定向壓縮 ${budgetStats.compressedParas} 段${budgetStats.failedCompressions ? ` · 壓縮失敗 ${budgetStats.failedCompressions} 段` : ''}${budgetStats.cutRatio != null ? ` · 削幅 ${(budgetStats.cutRatio * 100).toFixed(0)}%` : ''}\n${budgetStats.cvWarn ? `- ⚠ 壓縮後 CV ${budgetStats.cvWarn} 低於安全帶——建議人工覆核節奏\n` : ''}` : ''}${grindInfo ? `\n## 段級研磨（8.0）\n\n- 動作：**${grindInfo.action === 'applied' ? '採用' : grindInfo.action === 'reverted' ? `回退（${grindInfo.reason}）` : grindInfo.action === 'skipped' ? `跳過（${grindInfo.reason || 'form 模式'}）` : '停用'}**\n${grindInfo.preGen != null ? `- 整份 gen：${fmt(grindInfo.preGen)} → ${fmt(grindInfo.postGen)} · 語法傷率：${fmt(grindInfo.postDamage)}\n` : ''}${grindInfo.stats && grindInfo.stats.attempts ? `- 嘗試 ${grindInfo.stats.attempts}＝採用 ${grindInfo.stats.accepted}＋no-gain ${grindInfo.stats.noGain}＋拒收 ${grindInfo.stats.rejected}${grindInfo.stats.failed ? `＋失敗 ${grindInfo.stats.failed}` : ''} · ${grindInfo.stats.roundsRun} 輪\n` : ''}` : ''}${simInfo ? `\n## 查重打磨（8.2）\n\n- 動作：**${simInfo.action === 'applied' ? '採用' : simInfo.action === 'reverted' ? `回退（${simInfo.reason}）` : '無變化'}**\n${simInfo.pplBefore != null ? `- 整份 ppl：${fmt(simInfo.pplBefore, 1)} → ${fmt(simInfo.pplAfter, 1)}（較高＝較少通用措辭）\n` : ''}${simInfo.stats && simInfo.stats.moves && simInfo.stats.moves.length ? `- 改寫句：${simInfo.stats.moves.map((m) => `p${m.para + 1}s${m.sent + 1} ppl ${m.pplBefore}→${m.pplAfter}`).join('、')}\n` : ''}` : ''}${citeCheck && (citeCheck.mismatches.length || citeCheck.checked) ? `\n## 引用一致性（8.2）\n\n- 內文引用 ${citeCheck.checked} 個 · References 條目 ${citeCheck.references} 筆\n${citeCheck.fixes.length ? `- 已自動對齊：${citeCheck.fixes.map((f) => `${f.from} → ${f.to}`).join('、')}\n` : ''}${citeCheck.mismatches.filter((m) => !m.fixed).length ? `- ⚠ 需人工核對：${citeCheck.mismatches.filter((m) => !m.fixed).map((m) => `${m.inText} vs [${m.refYears.join('/')}]`).join('、')}\n` : ''}` : ''}${qFix && qFix.surgeries ? `\n## 二級品質手術（8.2，CoLA < ${qFix.threshold}）\n\n${qFix.list.map((s) => `- 「${s.before}」→「${s.after}」`).join('\n')}\n` : ''}
 ${formCheck ? `\n## form 檢查\n\n引用 ${formCheck.citations} 個 / 數字 ${formCheck.numbers} 個：${formCheck.missingCitations.length || formCheck.missingNumbers.length ? `**缺 ${formCheck.missingCitations.length} 引用、${formCheck.missingNumbers.length} 數字，需人工核對**` : '全數保留 ✓'}\n` : ''}
 ## A → B
 

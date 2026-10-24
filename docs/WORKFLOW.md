@@ -1,6 +1,6 @@
-# Humanizer Workflow 8.1 — 完整說明
+# Humanizer Workflow 8.2 — 完整說明
 
-> 一句話：**本機 hz 多候選 → 離線評分擇優（早停帶 gen 閘）＋段落重組＋NLI 守門（矛盾段定向救援）＋自動段級研磨＋字數預算（刪除優先）→ 確定性語法層；一鍵紅區實測 0% AI；全程零 API、零送檔迭代；Turnitin 只花在里程碑驗證。**
+> 一句話：**本機 hz 多候選 → 離線評分擇優（早停帶 gen 閘＋ppl 平手抉選）＋段落重組＋NLI 守門（矛盾／內容損失定向救援）＋自動段級研磨＋查重打磨＋字數預算＋引用一致性＋二級品質手術 → 確定性語法層；一鍵紅區三連發 0% AI；全程零 API、零送檔迭代；Turnitin 只花在里程碑驗證。**
 >
 > 版本：**7.5** · 最後更新：2026-10-24（E2-grind 送檔實測 0% AI／13% 查重／0 flags——紅區打通；grind 待整合進 v6） · 適用於 `F:\Humanizer`
 
@@ -864,6 +864,24 @@ node --test polish/test/*.test.mjs
 **E2-grind 送檢實測（2026-10-24 13:31，碼 F20A277274）：Turnitin AI 0%、查重 13%、0 integrity flags。** 全校準集首個 0%，紅區文類（正式議論文＋引用＋統計）首次完全通過。離線 gen 0.030 ↔ Turnitin 0%，與 H2/H4 的檔位規律一致；查重 13% 是糖稅主題的常見文獻重疊（9% 網路＋4% 出版物，學生論文 0%）；0 flags 代表數字斗篷與研磨沒有留下操縱指紋。送檔 `E2-grind.docx`（研磨段落經 docx_bridge apply 寫回原稿結構），報告存 `pipeline/v6-test/turnitin/E2-grind_AI.pdf` / `E2-grind_similarity.pdf`。
 
 **結論**：紅區不是死牆——重組 X 把壞段先換掉、段級研磨再把最差段反覆重生，議論文能推進送檔帶並實測 0%。R3 的殘餘阻力是正式報告語域段（p2/p6 類），研磨對它的成功率低（多數嘗試 no gain）。產物：`E:\download\wf7.2-typetest\E2-final2\.v6-E2_argument_essay\candX.grind.prose.txt`。
+
+### 8.2（2026-10-25 凌晨）— 客戶 QA 清單落地＋查重打磨；一鍵三連發全 0%
+
+**背景**：客戶以 E2-oneclick81 對照 E2-grind 提出 7 項品質 QA（標題黏連、論點弱、引用年份錯、嵌套括號、文法小錯、語氣武斷、內容損失）。8.2 把可自動化的 6 項全部變成管線層：
+
+1. **標題保護**（plan 層）：≤9 詞、無句末標點、無引用的目標段判定為標題，不改寫——hz 會把「The Case for…」重寫成「標題＋自創論點」黏連行。run10 起標題永遠原樣。
+2. **引用年份一致性**（選定後）：內文 (Author, Year) 與 References 交叉比對；References 為準，唯一候選年自動對齊（實測：Colchero 2016→2017），多義年供人工。零 AI 訊號。
+3. **嵌套括號**（mechanicalPolish）：`(for the benefit … (Bandy et al., 2020)).` → 拆外層、引用移句尾。零 AI 訊號。
+4. **內容損失救援**：NLI 的 entail 首次參與決策——pair entail < 0.6（filters.minEntail）標記「內容損失」，rescueContradictions 擴展為雙模式（矛盾/內容損失）定向重生。run10 選中候選 entail 0.992，原稿的三理由論點句（This essay argues…）在成品中保留。
+5. **選擇器 ppl 平手抉選**：全部 eligible 候選做完 NLI 再選；risk 差 ≤0.02 內選 ppl 較高者（離線查重代理：13%@ppl30.5／22%@ppl23.6 前／16%@ppl23.6 後）。
+6. **查重打磨（5.6 步）**：逐句 GPT-2 ppl，重生最 stock（最低 ppl）的 3 句，接受條件＝新句 ppl 嚴格更高＋CoLA＋NLI；整份驗收＝留在送檢帶（gen/傷率/CV/引用），出帶即回退。run10：3 句改寫（ppl 16→20/16→18/16→22），整份 ppl 22.9→23.6。
+7. **二級品質手術（5.7 步）**：CoLA 0.7 門檻（0.5 放行的彆扭句）、最多 4 句、從原句重生、逐段 NLI 守門回退。run10 修 1 句（Hypothetical pricing studies…→As an example, hypothetical UK taxation studies…）。
+
+**送檢實測（2026-10-25，碼 #5 05B0C1E1EB，第 19 點）：E2-oneclick82 = Turnitin AI 0%／查重 16%／0 flags**（Submission ID trn:oid:::26334:983976997，664 詞）。**一鍵三連發全 0%**（81 版 0%/22%、82 版 0%/16%，加手動版 0%/13%）；**查重 22%→16%，低於 20% 理想線**，ppl↔similarity 相關性第三點驗證。用戶 QA 7 項：標題✓ 論點句✓ 引用年✓ 嵌套括號✓ 文法（1 句二級手術，殘餘見下）✓ 內容損失（entail 救援就位）✓；語氣武斷屬內容編輯（--quality-edit 待定價，未做）。
+
+**殘餘與 8.3 候選**：hz 在結論段自造「Conclusion In summary」黏連（與標題黏連同源的鏡像行為，plan 層保護管不到重寫輸出——需機械規則剝段落開頭的孤立 heading 詞）；「There are many factors.」碎片與 one of the leading cause 類主謂一致仍在 CoLA 0.7 之下（可試 0.75 但 churn 上升）；Mytton 數字歸屬需人工對文獻；References 的 et al. 展開需作者資料（皆人工欄位）。
+
+**碼帳本：5 碼全用罄**（#1 H2、#2 H4、#3 E2-grind、#4 oneclick81、#5 oneclick82）。校準集 19 點／19 課。
 
 ### 8.1（2026-10-25）— NLI 定向重生救援 ＋ 早停 gen 閘；**一鍵紅區首發 0% AI**
 
