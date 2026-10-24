@@ -18,7 +18,7 @@ const HOST = '127.0.0.1';
 const PORT = Number(process.env.PORT || 8790);
 const MAX_BODY = 12 * 1024 * 1024;
 const STARTED_AT = Date.now();
-const WORKFLOW_VERSION = '7.1';
+const WORKFLOW_VERSION = '8.0';
 const MAX_RUNTIME_MS = 60 * 60 * 1000;
 
 fs.mkdirSync(RUNS, { recursive: true });
@@ -164,9 +164,16 @@ function handleRun(req, res) {
 
     let args;
     if (mode === 'v6') {
-      args = [V6, inputPath, '--out-dir', runDir, '--target', target];
+      args = [V6, inputPath, '--out-dir', runDir, '--target', target, '--final-name', 'original.final'];
       if (Number.isInteger(payload.candidates) && payload.candidates >= 1) {
         args.push('--candidates', String(payload.candidates));
+      }
+      // 8.0: grind is on by default inside v6; word budget is opt-in per run
+      if (Number.isInteger(payload.maxWords) && payload.maxWords >= 100) {
+        args.push('--max-words', String(payload.maxWords));
+        if (Number.isInteger(payload.floorWords) && payload.floorWords >= 50) {
+          args.push('--floor-words', String(payload.floorWords));
+        }
       }
     } else {
       args = [PIPELINE, inputPath, '--out-dir', runDir, '--verify', verify, '--lang', lang];
@@ -194,7 +201,8 @@ function handleRun(req, res) {
         else if (line.includes('=== 2/7')) setStage('generate');
         else if (line.includes('=== 3/7')) setStage('score');
         else if (line.includes('=== 4/7')) setStage('surgery');
-        else if (line.includes('=== 5/7') || line.includes('=== 6/7') || line.includes('=== 7/7')) setStage('deliver');
+        else if (line.includes('=== 5/7') || line.includes('=== 5.5/7')) setStage('grind');
+        else if (line.includes('=== 6/7') || line.includes('=== 7/7')) setStage('deliver');
         else if (line.includes('交付檔')) setStage('done');
       } else {
         if (line.includes('=== 1/2')) setStage('humanize');

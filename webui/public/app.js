@@ -59,7 +59,8 @@ const STEP_DEFS = {
   v6: [
     { label: '產生候選版本', keys: ['plan', 'generate'] },
     { label: '選出最好的', keys: ['score'] },
-    { label: '逐句修整・檢查', keys: ['surgery', 'deliver'] },
+    { label: '研磨與修整', keys: ['surgery', 'grind'] },
+    { label: '檢查與交付', keys: ['deliver'] },
   ],
   classic: [
     { label: '改寫一次', keys: ['humanize'] },
@@ -428,14 +429,19 @@ async function run() {
   appendLog('送出…');
 
   let res;
+  const maxWords = parseInt($('maxWords').value, 10);
+  const floorWords = parseInt($('floorWords').value, 10);
+  const budget = Number.isInteger(maxWords) && maxWords >= 100
+    ? { maxWords, ...(Number.isInteger(floorWords) && floorWords >= 50 ? { floorWords } : {}) }
+    : {};
   try {
     res = await fetch('/api/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(state.mode === 'v6'
         ? (docx
-            ? { mode: 'v6', target: $('lowAi').checked ? 'ideal' : 'balanced', docxName: docx.name, docxBase64: docx.base64 }
-            : { mode: 'v6', target: $('lowAi').checked ? 'ideal' : 'balanced', original })
+            ? { mode: 'v6', target: $('lowAi').checked ? 'ideal' : 'balanced', ...budget, docxName: docx.name, docxBase64: docx.base64 }
+            : { mode: 'v6', target: $('lowAi').checked ? 'ideal' : 'balanced', ...budget, original })
         : (docx
             ? {
                 docxName: docx.name,

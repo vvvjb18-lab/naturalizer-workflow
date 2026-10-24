@@ -22,8 +22,9 @@ import {
   generateCandidate, candidateStats, rankCandidates,
   grammarScores, nliPairs, scoreFiles, closeDetector,
   detectDocType, surgicalRepair, assembleCrossover, shouldStopEarly,
-  mechanicalPolish, applyWordBudget,
+  mechanicalPolish, applyWordBudget, scoreTexts,
 } from './candidates.mjs';
+import { grindParas } from './grind.mjs';
 import { detectLang, splitSentences, wordCount } from '../polish/src/text.mjs';
 import { factNumbers, citationsIn } from '../polish/src/checks.mjs';
 
@@ -31,7 +32,7 @@ const HERE = import.meta.dirname;
 const PIPELINE = path.resolve(HERE, 'pipeline.mjs');
 const DOCX_BRIDGE = path.resolve(HERE, 'docx_bridge.py');
 
-const HELP = `v6.mjs — Workflow 7.0（選擇式管線：早停 × 手術 × 段落重組 × NLI 守門）
+const HELP = `v6.mjs — Workflow 8.0（選擇式管線：早停 × 手術 × 段落重組 × NLI 守門 × 自動研磨 × 字數預算）
 
 用法：node v6.mjs <draft.docx|txt> [選項]
 
@@ -53,6 +54,7 @@ const HELP = `v6.mjs — Workflow 7.0（選擇式管線：早停 × 手術 × �
   --no-lt              停用 LanguageTool 確定性語法層
   --final-name N       交付副本檔名（預設 final7.0）
   --form / --essay     強制文件型別
+  --no-grind           停用 8.0 自動段級研磨（預設開：gen>0.10 觸發，NLI 守門）
   --max-words N        7.6 字數預算：交付上限 N 詞（刪除優先，超 30% 削幅需 --force-budget）
   --floor-words N      字數下限（作業最少字數；低於即報錯不交付）
   --force-budget       允許超過 30% 的刪減幅度（建議先人工確認內容取捨）
@@ -123,6 +125,16 @@ async function main() {
   if (args.k['max-words']) { wb.enabled = true; wb.maxWords = parseInt(args.k['max-words'], 10); }
   if (args.k['floor-words']) wb.floorWords = parseInt(args.k['floor-words'], 10);
   if (args.k['force-budget']) wb.force = true;
+
+  // 8.0 paragraph grind: on by default for essays; --no-grind disables
+  const gc = {
+    enabled: cfg.grind?.enabled !== false,
+    genGate: cfg.grind?.genGate ?? 0.10,
+    rounds: cfg.grind?.rounds ?? 3,
+    worst: cfg.grind?.worst ?? 3,
+    gain: cfg.grind?.gain ?? 0.02,
+  };
+  if (args.k.grind === false || String(args.k.grind) === 'false') gc.enabled = false;
 
   const input = path.resolve(args._[0]);
   if (!fs.existsSync(input)) { console.error(`找不到原稿：${input}`); process.exit(1); }
@@ -360,6 +372,61 @@ async function main() {
     if (!chosen) throw new Error('所有 eligible 候選都被 NLI 擋下');
     console.log(`  → 選定 ${chosen.crossover ? '重組 X' : `cand${chosen.id}`}`);
 
+    // 5.5 ── 8.0: automatic paragraph grind ─────────────────────────────────
+    // Calibration: gen ≤ 0.05 → <20%; ≤0.10 is the submission gate. If the
+    // chosen candidate is already there, skip. Otherwise grind the worst
+    // paragraphs (delete is not an option here — the prose must stay whole),
+    // then accept only if the whole-text score improved AND the grammar
+    // damage stayed inside the delivery band; otherwise revert to pre-grind.
+    let grindInfo = null;
+    if (docType.form) {
+      console.log('=== 5.5/7 段級研磨：form 模式跳過（V2 配方不動 A）===');
+      grindInfo = { action: 'skipped', reason: 'form mode (V2 recipe)' };
+    } else if (!gc.enabled) {
+      console.log('=== 5.5/7 段級研磨：停用（--no-grind）===');
+      grindInfo = { action: 'disabled' };
+    } else if ((chosen.score?.p_ai_gen ?? 1) <= gc.genGate) {
+      console.log(`=== 5.5/7 段級研磨：gen ${fmt(chosen.score?.p_ai_gen)} 已 ≤ 門檻 ${gc.genGate}，跳過 ===`);
+      grindInfo = { action: 'skipped', reason: `gen ${fmt(chosen.score?.p_ai_gen)} ≤ gate ${gc.genGate}` };
+    } else {
+      console.log(`=== 5.5/7 段級研磨（gen ${fmt(chosen.score?.p_ai_gen)} > ${gc.genGate}，最多 ${gc.rounds} 輪 × worst-${gc.worst}，NLI 守門）===`);
+      const idxList = targetIdx;
+      const origParas = idxList.map((i) => originalsByPara[i] || '');
+      const parasIn = idxList.map((i) => chosen.paras[i] || originalsByPara[i] || '');
+      const { paras: ground, stats: gstats } = await grindParas({
+        origParas, paras: parasIn, lang,
+        rounds: gc.rounds, worst: gc.worst, gain: gc.gain,
+        log: (m) => console.log(`  ${m}`),
+      });
+      const newProse = ground.join('\n\n');
+      const postDamage = await damageOf(newProse);
+      const [postScore] = await scoreTexts([newProse]);
+      const preGen = chosen.score?.p_ai_gen ?? null;
+      const postGen = postScore?.p_ai_gen ?? null;
+      const preDamage = chosen.grammarDamage ?? 0;
+      const maxDmg = cfg.filters?.maxGrammarDamage ?? 0.08;
+      if (postDamage > maxDmg) {
+        grindInfo = { action: 'reverted', reason: `grind 後語法傷率 ${fmt(postDamage)} > ${maxDmg}`, preGen, postGen, postDamage, stats: gstats };
+        console.log(`  ⚠ grind 後傷率 ${fmt(postDamage)} 超上限 ${maxDmg} → 回退研磨前文本`);
+      } else if (preGen != null && postGen != null && postGen > preGen) {
+        grindInfo = { action: 'reverted', reason: `整份 gen 不升反降（${fmt(preGen)} → ${fmt(postGen)}）`, preGen, postGen, postDamage, stats: gstats };
+        console.log(`  ⚠ 整份 gen 未改善（${fmt(preGen)} → ${fmt(postGen)}）→ 回退研磨前文本`);
+      } else if (!gstats.accepted) {
+        grindInfo = { action: 'no-op', reason: '0 段改善', preGen, postGen, postDamage, stats: gstats };
+        console.log('  grind 無段改善，文本不變');
+      } else {
+        idxList.forEach((i, j) => { chosen.paras[i] = ground[j]; });
+        chosen.prose = newProse;
+        chosen.grammarDamage = postDamage;
+        chosen.score = { ...chosen.score, p_ai_gen: postGen, p_ai_edit: postScore?.p_ai_edit ?? chosen.score?.p_ai_edit, perplexity: postScore?.perplexity ?? chosen.score?.perplexity };
+        const newStats = candidateStats({ originalProse, prose: newProse, lang });
+        newStats.coverage = chosen.stats.coverage;
+        chosen.stats = newStats;
+        grindInfo = { action: 'applied', preGen, postGen, preDamage, postDamage, stats: gstats };
+        console.log(`  grind 採用：整份 gen ${fmt(preGen)} → ${fmt(postGen)}，傷率 ${fmt(postDamage)}`);
+      }
+    }
+
     // form-mode citation/number summary (7.0: 四維承諾補全)
     let formCheck = null;
     if (docType.form) {
@@ -558,6 +625,7 @@ async function main() {
       bScore: bScores, deltas: { p_ai_edit: deltaEdit, p_ai_gen: deltaGen },
       cvGuard, formCheck,
       budget: budgetStats,
+      grind: grindInfo,
       editLensDeltaAdvisory: cfg.editLensDeltaAdvisory ?? 0.1,
       files: { aDocx, aProse, bDocx, bReport },
     };
@@ -565,7 +633,7 @@ async function main() {
     fs.writeFileSync(v6Report, JSON.stringify(report, null, 1), 'utf8');
 
     const rows = pool.map((c) => `| ${c.crossover ? 'X' : c.id}${c.crossover ? '（重組）' : ''} | ${(c.stats.coverage * 100).toFixed(0)}% | ${fmt(c.stats.cv, 3)} | ${fmt(c.grammarDamagePre)} | ${fmt(c.grammarDamage)} | ${(c.surgeries || []).length} | ${fmt(c.score?.perplexity, 1)} | ${fmt(c.score?.p_ai_gen)} | ${fmt(c.score?.p_ai_edit)} | ${fmt(c.nli?.maxContradict)} | ${eligible.includes(c) ? fmt(c.risk) : '淘汰'} |`).join('\n');
-    const md = `# Workflow 7.0 風險卡
+    const md = `# Workflow 8.0 風險卡
 
 - 生成時間：${report.generatedAt}
 - 原稿：${input} · 語言 ${lang} · 型別 **${docType.form ? 'form／模板（V2 配方）' : 'essay（CV 帶）'}**
@@ -578,7 +646,7 @@ async function main() {
 ${rows}
 
 原稿基準：ppl ${fmt(originalScore?.perplexity, 1)} · gen ${fmt(originalScore?.p_ai_gen)} · edit ${fmt(originalScore?.p_ai_edit)} · 語法傷率 ${fmt(origDamage)}
-${budgetStats ? `\n## 字數預算（7.6）\n\n- 上限 ${budgetStats.maxWords}${budgetStats.floorWords != null ? ` · 下限 ${budgetStats.floorWords}` : ''}：**${budgetStats.beforeWords} → ${budgetStats.afterWords} 詞**\n- 刪句 ${budgetStats.deletedSentences}（-${budgetStats.deletedWords} 詞） · 定向壓縮 ${budgetStats.compressedParas} 段${budgetStats.failedCompressions ? ` · 壓縮失敗 ${budgetStats.failedCompressions} 段` : ''}${budgetStats.cutRatio != null ? ` · 削幅 ${(budgetStats.cutRatio * 100).toFixed(0)}%` : ''}\n${budgetStats.cvWarn ? `- ⚠ 壓縮後 CV ${budgetStats.cvWarn} 低於安全帶——建議人工覆核節奏\n` : ''}` : ''}
+${budgetStats ? `\n## 字數預算（7.6）\n\n- 上限 ${budgetStats.maxWords}${budgetStats.floorWords != null ? ` · 下限 ${budgetStats.floorWords}` : ''}：**${budgetStats.beforeWords} → ${budgetStats.afterWords} 詞**\n- 刪句 ${budgetStats.deletedSentences}（-${budgetStats.deletedWords} 詞） · 定向壓縮 ${budgetStats.compressedParas} 段${budgetStats.failedCompressions ? ` · 壓縮失敗 ${budgetStats.failedCompressions} 段` : ''}${budgetStats.cutRatio != null ? ` · 削幅 ${(budgetStats.cutRatio * 100).toFixed(0)}%` : ''}\n${budgetStats.cvWarn ? `- ⚠ 壓縮後 CV ${budgetStats.cvWarn} 低於安全帶——建議人工覆核節奏\n` : ''}` : ''}${grindInfo ? `\n## 段級研磨（8.0）\n\n- 動作：**${grindInfo.action === 'applied' ? '採用' : grindInfo.action === 'reverted' ? `回退（${grindInfo.reason}）` : grindInfo.action === 'skipped' ? `跳過（${grindInfo.reason || 'form 模式'}）` : '停用'}**\n${grindInfo.preGen != null ? `- 整份 gen：${fmt(grindInfo.preGen)} → ${fmt(grindInfo.postGen)} · 語法傷率：${fmt(grindInfo.postDamage)}\n` : ''}${grindInfo.stats && grindInfo.stats.attempts ? `- 嘗試 ${grindInfo.stats.attempts}＝採用 ${grindInfo.stats.accepted}＋no-gain ${grindInfo.stats.noGain}＋拒收 ${grindInfo.stats.rejected}${grindInfo.stats.failed ? `＋失敗 ${grindInfo.stats.failed}` : ''} · ${grindInfo.stats.roundsRun} 輪\n` : ''}` : ''}
 ${formCheck ? `\n## form 檢查\n\n引用 ${formCheck.citations} 個 / 數字 ${formCheck.numbers} 個：${formCheck.missingCitations.length || formCheck.missingNumbers.length ? `**缺 ${formCheck.missingCitations.length} 引用、${formCheck.missingNumbers.length} 數字，需人工核對**` : '全數保留 ✓'}\n` : ''}
 ## A → B
 
@@ -599,7 +667,7 @@ ${formCheck ? `\n## form 檢查\n\n引用 ${formCheck.citations} 個 / 數字 ${
     fs.writeFileSync(path.join(outDir, `${base}.v6.report.md`), md, 'utf8');
     console.log(md);
 
-    const finalName = args.k['final-name'] || 'final7.0';
+    const finalName = args.k['final-name'] || 'final8.0';
     if (fs.existsSync(bDocx)) {
       const finalCopy = path.join(outDir, `${finalName}.docx`);
       fs.copyFileSync(bDocx, finalCopy);

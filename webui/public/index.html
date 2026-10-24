@@ -29,8 +29,8 @@
       <div class="mode-row" role="tablist">
         <label class="mode selected"><input type="radio" name="mode" value="v6" checked>
           <span class="m-title">精修 <em class="rec">推薦</em></span>
-          <span class="m-desc">產生數個版本 → 選最好的 → 逐句修語法</span>
-          <span class="m-desc dim">約 15–25 分鐘 · 適合：要交的稿件</span>
+          <span class="m-desc">產生數個版本 → 選最好的 → 段落研磨 → 修語法</span>
+          <span class="m-desc dim">約 15–30 分鐘 · 適合：要交的稿件</span>
         </label>
         <label class="mode"><input type="radio" name="mode" value="classic">
           <span class="m-title">快速</span>
@@ -44,6 +44,17 @@
           <input id="lowAi" type="checkbox">
           <span>盡量壓低 AI 味（成品會保留輕微口語感，需時較長）</span>
         </label>
+        <div class="options">
+          <label>字數上限
+            <input id="maxWords" type="number" min="100" step="50" placeholder="不限"
+              style="width:7em">
+          </label>
+          <label>字數下限
+            <input id="floorWords" type="number" min="50" step="50" placeholder="不限"
+              style="width:7em">
+          </label>
+        </div>
+        <p class="hint">設了上限，交付前會先刪次要句（不動論點、數字、引用）；References 不計入字數。</p>
       </div>
 
       <div id="classicOptions" hidden>

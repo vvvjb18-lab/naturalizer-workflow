@@ -374,7 +374,7 @@ export function rankCandidates(cands, { weights = {}, filters = {} } = {}) {
   const formMode = !!filters.formMode;
   const w = formMode
     ? { damage: 0.7, gen: 0.15, copy: 0.15, ...weights }
-    : { burst: 0.55, damage: 0.3, gen: 0.05, edit: 0.05, plx: 0.05, ...weights };
+    : { burst: 0.3, damage: 0.3, gen: 0.25, edit: 0.05, plx: 0.05, copy: 0.05, ...weights };
   const f = {
     minCoverage: 1,
     minCvRatio: 1.1,          // essays: never deliver smoother than the AI draft
@@ -418,8 +418,12 @@ export function rankCandidates(cands, { weights = {}, filters = {} } = {}) {
         if (c.stats.cv > bHi) return (c.stats.cv - bHi) / bHi;
         return 0;
       });
-      burst = norm(burstPen);
-      frag = norm(eligible.map((c) => c.stats.sentenceInflation));
+      // 8.0.1: use the raw band distance, not min-max normalized. The old
+      // normalization turned a 3% band miss (CV 0.436 vs floor 0.45) into a
+      // full penalty and buried a gen-0.028 candidate — the final5.0 profile
+      // (0.414/0.046) that actually passed <20%.
+      burst = burstPen;
+      frag = eligible.map((c) => Math.max(0, (c.stats.sentenceInflation ?? 1) - 1));
     }
     eligible.forEach((c, i) => {
       c.risk = w.damage * dmg[i]

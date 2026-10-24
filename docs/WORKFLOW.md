@@ -1,6 +1,6 @@
-# Humanizer Workflow 7.6 — 完整說明
+# Humanizer Workflow 8.0 — 完整說明
 
-> 一句話：**本機 hz 多候選 → 離線評分擇優＋段落重組＋字數預算（刪除優先）→ 確定性語法層；段級研磨已驗證待整合；全程零 API、零送檔迭代；Turnitin 只花在里程碑驗證。**
+> 一句話：**本機 hz 多候選 → 離線評分擇優＋段落重組＋NLI 守門＋自動段級研磨＋字數預算（刪除優先）→ 確定性語法層；一鍵全鏈閉環；全程零 API、零送檔迭代；Turnitin 只花在里程碑驗證。**
 >
 > 版本：**7.5** · 最後更新：2026-10-24（E2-grind 送檔實測 0% AI／13% 查重／0 flags——紅區打通；grind 待整合進 v6） · 適用於 `F:\Humanizer`
 
@@ -864,6 +864,22 @@ node --test polish/test/*.test.mjs
 **E2-grind 送檢實測（2026-10-24 13:31，碼 F20A277274）：Turnitin AI 0%、查重 13%、0 integrity flags。** 全校準集首個 0%，紅區文類（正式議論文＋引用＋統計）首次完全通過。離線 gen 0.030 ↔ Turnitin 0%，與 H2/H4 的檔位規律一致；查重 13% 是糖稅主題的常見文獻重疊（9% 網路＋4% 出版物，學生論文 0%）；0 flags 代表數字斗篷與研磨沒有留下操縱指紋。送檔 `E2-grind.docx`（研磨段落經 docx_bridge apply 寫回原稿結構），報告存 `pipeline/v6-test/turnitin/E2-grind_AI.pdf` / `E2-grind_similarity.pdf`。
 
 **結論**：紅區不是死牆——重組 X 把壞段先換掉、段級研磨再把最差段反覆重生，議論文能推進送檔帶並實測 0%。R3 的殘餘阻力是正式報告語域段（p2/p6 類），研磨對它的成功率低（多數嘗試 no gain）。產物：`E:\download\wf7.2-typetest\E2-final2\.v6-E2_argument_essay\candX.grind.prose.txt`。
+
+### 8.0（2026-10-24 深夜）— grind 進主鏈 ＋ webui 對齊；一鍵紅區全鏈打通
+
+**架構**：grind.mjs 重構為函式庫（`grindParas({origParas, paras, lang, rounds, worst, gain, gate, gramCheck, temps, log})`）＋CLI 外殼保留。v6.mjs 新增 **5.5/7 段級研磨**步：essay 選定後、預算/機械/LT 之前執行——gen ≤ genGate（預設 0.10，送檢紀律線）跳過；否則研磨 worst-3 段，**採用條件三閘**：整份 gen 不升、語法傷率 ≤ maxGrammarDamage（0.08）、有段改善（否則 no-op）。form 模式一律跳過（V2 配方）。`--no-grind` 停用；config `grind` 區塊可調。風險卡新增「段級研磨」節（動作、前後 gen、嘗試統計）。
+
+**8.0.1（三次一鍵實測逼出的三個修正）**：
+
+1. **grind 逐句 CoLA 閘（`gramCheck=0.5`）**：首跑研磨救活 3 段（p2 0.976→0.191、p5 0.967→0.019）但引入傷率 0.172 → 整體回退把好段一起丟掉。修正：重生成候選逐句過 CoLA，爛句在閘內拒收，好段保留——次跑同一閘兩次正確攔截（`ungrammatical (1/5 sentences)`），最終傷率 0.000。
+2. **選擇器 min-max 刀鋒修正（burst/damage/frag 改原始有界刻度）**：實測 cand1 gen 0.028（final5.0 同檔：CV 0.436 僅差帶下限 0.014）因歸一化把 3% 帶外距離放大成滿格懲罰（risk 0.603 全場最差）被埋沒。修正後權重 burst 0.55→0.3、gen 0.05→0.25、damage 0.3 不變；ranking 單測確認該輪廓排第一。
+3. **grind no-op 動作**：0 段改善時不再標「採用」。
+
+**三次一鍵紅區實測（E2 原稿，全程零手動）**：run1 觸發回退閘（研磨後傷率超限→回退，正確）；run2 無段改善早停＋no-op（正確）；**run3 全綠：grind 0.611→0.106（Δ−0.505）、傷率 0.000、NLI 閘拒掉矛盾候選（0.689）、LT 層 0 處**。0.106 距送檢線 0.10 差 0.006——按紀律不送檢；離線帶內已屢現 0.028–0.030 星級候選（每輪取樣都有），瓶頸是「星級候選同時過 NLI＋低傷」的取樣運氣，不是鏈路邏輯。候選 8.1 方向：NLI 拒收的候選改為「對矛盾段定向重生重試」而非整體跳過。
+
+**webui 對齊 8.0**：版本徽章 7.1→8.0；v6 模式補 `--final-name original.final`（修好修訂稿 .docx 下載一直錯位的問題）；進度步驟加「研磨與修整」；新增字數上限／下限欄位（7.6 預算直通）。localhost 冒煙測試過（/api/version → workflow 8.0）。
+
+**定位**：8.0 = 一鍵全鏈（候選→手術→重組→NLI→**研磨**→預算→LT）首次閉環。E2-grind 的 0% 仍由手動鏈保持（第 17 點）；一鍵產品送檢待離線 ≤0.10 的輪次（碼 #4 B398E0B859 留給它）。
 
 ### 7.6（2026-10-24 傍晚）— Word Budget：字數上限層（刪除優先）
 
