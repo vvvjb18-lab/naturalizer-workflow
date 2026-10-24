@@ -177,8 +177,12 @@ export async function generateCandidate({ plan, sampling = {}, retries = 2, lang
       let ok = false, last = '';
       for (let attempt = 0; attempt <= retries && !ok; attempt++) {
         try {
+          // Last try runs cold: a final deterministic pass against the
+          // rambling/length-explosion failure mode that kills coverage.
+          const isLast = attempt === retries;
+          const sampling2 = isLast ? { temperature: 0.7, topP: 0.9 } : sampling;
           const { cloaked, restore } = cloakNumbers(unit.text);
-          const outRaw = await completeUnit({ text: cloaked, sampling });
+          const outRaw = await completeUnit({ text: cloaked, sampling: sampling2 });
           const out = restore(outRaw);
           const v = validateUnit(unit.text, out, lang);
           if (v.ok) {
@@ -187,7 +191,7 @@ export async function generateCandidate({ plan, sampling = {}, retries = 2, lang
             break;
           }
           last = v.reason;
-          log(`  unit ${unit.id} attempt ${attempt + 1} rejected (${v.reason})`);
+          log(`  unit ${unit.id} attempt ${attempt + 1} rejected (${v.reason})${isLast ? ' [cold]' : ''}`);
         } catch (e) {
           last = e.message;
           log(`  unit ${unit.id} attempt ${attempt + 1} failed: ${e.message}`);
@@ -407,7 +411,9 @@ export function rankCandidates(cands, { weights = {}, filters = {} } = {}) {
     const gen = norm(eligible.map((c) => c.score.p_ai_gen ?? 0));
     const edit = norm(eligible.map((c) => c.score.p_ai_edit ?? 0));
     const plx = norm(eligible.map((c) => c.score.perplexity ?? 0));
-    const dmg = norm(eligible.map((c) => c.grammarDamage ?? 0));
+    // 8.1: raw, interpretable damage scale (0 = clean, 1 = hard limit). Min-max
+    // norm buried 0.040-damage gen-stars against a 0.045 outlier.
+    const dmg = eligible.map((c) => Math.min(1, (c.grammarDamage ?? 0) / (f.maxGrammarDamage || 0.08)));
     const copy = norm(eligible.map((c) => c.stats.copyRate));
     let burst = null, frag = null;
     if (!formMode) {
@@ -504,14 +510,18 @@ export function mechanicalPolish(text, lang = 'en') {
   return t.trim();
 }
 
-// ── 7.0: adaptive early stop ────────────────────────────────────────────────
+// ── 8.0: adaptive early stop ────────────────────────────────────────────────
 // After the first batch of candidates: if one already sits in the deliverable
 // zone, skip generating the rest. balanced wants zero damage; ideal keeps a
 // roughness band (calibration: only damage 0.086–0.245 texts passed <20).
-export function shouldStopEarly(cands, { formMode = false, target = 'balanced', cvBand = [0.45, 0.65] } = {}) {
+// 8.1: gen ≤ genGate is part of "deliverable" — CV/damage alone stop the
+// sampling on rhythmically-fine, statistically-awful candidates (run8: three
+// 0.5-0.8 candidates early-stopped while stars sat at #3-4).
+export function shouldStopEarly(cands, { formMode = false, target = 'balanced', cvBand = [0.45, 0.65], genGate = 0.10 } = {}) {
   const [bLo, bHi] = cvBand;
   return cands.some((c) => {
     if ((c.stats?.coverage ?? 0) < 1) return false;
+    if ((c.score?.p_ai_gen ?? 1) > genGate) return false;
     const dmg = c.grammarDamagePre ?? 0;
     if (formMode) return dmg <= 0.05;
     const cv = c.stats?.cv ?? 0;

@@ -15,7 +15,7 @@ import { completeUnit, validateUnit, cloakNumbers, nliPairs, grammarScores } fro
 import { splitSentences } from '../polish/src/text.mjs';
 import { scoreTexts, closeDetector } from './detector_client.mjs';
 
-const DEFAULT_TEMPS = [1.0, 1.1, 0.95];
+const DEFAULT_TEMPS = [1.0, 1.15, 0.9, 1.05];
 
 export async function grindParas({
   origParas, paras, lang = 'en',
@@ -83,6 +83,50 @@ export async function grindParas({
   const finalScores = await paraScores(out);
   stats.finalParaMean = Number((finalScores.reduce((a, b) => a + b, 0) / Math.max(1, finalScores.length)).toFixed(3));
   return { paras: out, stats };
+}
+
+// ── 8.1: NLI rescue ─────────────────────────────────────────────────────────
+// A candidate with one contradicting paragraph used to be skipped whole. Here
+// only the offending paragraphs are regenerated (same guards as grind:
+// validateUnit + per-sentence CoLA + NLI vs the original paragraph) and the
+// caller re-verifies the whole candidate afterwards.
+export async function rescueContradictions({
+  origParas, paras, badIdx, lang = 'en',
+  tries = 3, gramCheck = 0.5, temps = DEFAULT_TEMPS, log = () => {},
+}) {
+  const out = [...paras];
+  const fixed = {};
+  for (const i of badIdx) {
+    if (!out[i]) continue;
+    let done = false;
+    for (let t = 0; t < tries && !done; t++) {
+      try {
+        const { cloaked, restore } = cloakNumbers(out[i]);
+        const candidate = restore(await completeUnit({ text: cloaked, sampling: { temperature: temps[t % temps.length], topP: 0.95 } }));
+        const v = validateUnit(out[i], candidate, lang);
+        if (!v.ok) { log(`  rescue p${i + 1} attempt ${t + 1} rejected (${v.reason})`); continue; }
+        if (gramCheck > 0) {
+          const sents = splitSentences(candidate, lang).map((s) => s.text);
+          if (sents.length) {
+            const grams = await grammarScores(sents);
+            const bad = grams.filter((g) => g < gramCheck).length;
+            if (bad > 0) { log(`  rescue p${i + 1} attempt ${t + 1} ungrammatical (${bad}/${sents.length})`); continue; }
+          }
+        }
+        if (origParas[i]) {
+          const [pair] = await nliPairs([[origParas[i], candidate]]);
+          if (pair && pair.contradict > 0.5) { log(`  rescue p${i + 1} attempt ${t + 1} still contradicts (${pair.contradict.toFixed(2)})`); continue; }
+        }
+        out[i] = candidate;
+        fixed[i] = true;
+        done = true;
+        log(`  rescue p${i + 1}: ✓`);
+      } catch (e) {
+        log(`  rescue p${i + 1} attempt ${t + 1} failed: ${e.message.slice(0, 80)}`);
+      }
+    }
+  }
+  return { paras: out, fixed };
 }
 
 // ── CLI wrapper (standalone use; v6.mjs calls grindParas directly) ─────────

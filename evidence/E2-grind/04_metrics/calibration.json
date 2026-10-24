@@ -190,6 +190,19 @@
    "coverage": 1,
    "pipeline": "v6 ideal (6 cands, word-number cloak) -> crossover X (gen 0.175) -> grind.mjs paragraph-level regen with NLI gate -> docx",
    "note": "第17點（2026-10-24 13:31，碼 F20A277274）：紅區（正式議論文+引用+統計）首次 0% AI。離線 gen 0.030 <-> Turnitin 0%，檔位規律與 H2(0.031<20%)/H4(0.048<20%) 一致。查重 13%（9%網路+4%出版物，糖稅主題常見來源；學生論文 0%）。0 integrity flags：數字斗篷與研磨無操縱指紋。"
+  },
+  {
+   "name": "E2-oneclick81 (一键 8.1, code B398E0B859)",
+   "turnitin": "0 AI / 22 similarity / 0 flags",
+   "cv": 0.477,
+   "shortRatio": 0,
+   "sentences": 0,
+   "words": 569,
+   "p_ai_gen": 0.02,
+   "p_ai_edit": 0.144,
+   "ppl": 24.9,
+   "coverage": 1,
+   "note": "第18点（2026-10-25，码 B398E0B859）：一鍵 8.1 產品（v6 run9, cand3, 無研磨——gen 0.020 直落送檢帶）。紅區 argumentative。0% AI；similarity 22% 高於手動版 13%（同一主題的通用網路來源措辭），客戶交付時若需壓查重另行處理。早停加 gen 閘後首發即中。"
   }
  ],
  "lessons": [
@@ -222,7 +235,8 @@
   {
    "id": 17,
    "lesson": "紅區不是死牆：選擇式管線（6 候選+段落重組 X）把 E2 從原稿 0.963 壓到 0.175，段級研磨（grind.mjs，NLI 守門+數字斗篷）再壓到 0.030，Turnitin 實測 0% AI／13% 查重／0 integrity flags。研磨逐段分數是膨脹尺度（0.8-0.98），只做相對比較，驗收回整份；正式語域段（R3 p2 類）多數嘗試 no gain，是研磨天花板。"
-  }
+  },
+  "第18課：早停不看 gen 會系統性錯過星級候選（六輪一鍵中 3 候選就停、星級全在第 3-4 位之後）——shouldStopEarly 加 genGate 後首發 0.020 直落 0% AI。"
  ],
  "acceptance": {
   "acceptable": "<30",

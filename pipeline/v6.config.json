@@ -10,10 +10,10 @@
  "surgeryTries": 3,
  "maxSurgeries": 8,
  "grind": {
-  "_desc": "8.0：essay 選定候選 gen>genGate 時自動段級研磨（整份分數改善＋傷率帶內才採用，否則回退）。form 模式一律跳過。",
+  "_desc": "8.0：essay 選定候選 gen>genGate 時自動段級研磨（整份分數改善＋傷率帶內才採用，否則回退）。form 模式一律跳過。rounds=5：實測正式語域段（p6 類）常在第 3 輪後才鬆動。",
   "enabled": true,
   "genGate": 0.10,
-  "rounds": 3,
+  "rounds": 5,
   "worst": 3,
   "gain": 0.02
  },

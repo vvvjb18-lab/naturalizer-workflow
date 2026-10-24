@@ -24,7 +24,7 @@ import {
   detectDocType, surgicalRepair, assembleCrossover, shouldStopEarly,
   mechanicalPolish, applyWordBudget, scoreTexts,
 } from './candidates.mjs';
-import { grindParas } from './grind.mjs';
+import { grindParas, rescueContradictions } from './grind.mjs';
 import { detectLang, splitSentences, wordCount } from '../polish/src/text.mjs';
 import { factNumbers, citationsIn } from '../polish/src/checks.mjs';
 
@@ -219,7 +219,7 @@ async function main() {
     const stopCheck = async () => !useAdaptive
       ? false
       : candidates.length >= (cfg.adaptiveFirst ?? 3)
-        && shouldStopEarly(candidates, { formMode: docType.form, target: cfg.target, cvBand: cfg.filters.cvBand });
+        && shouldStopEarly(candidates, { formMode: docType.form, target: cfg.target, cvBand: cfg.filters.cvBand, genGate: gc.genGate });
     for (let k = 0; k < cfg.candidates; k++) {
       const sampling = cfg.samplings[k] || { temperature: 1.0, topP: 0.95 };
       console.log(`  candidate ${k + 1}/${cfg.candidates} (temp ${sampling.temperature}, top_p ${sampling.topP})`);
@@ -236,6 +236,9 @@ async function main() {
       stats.coverage = gen.coverage;
       const c = { id: k + 1, sampling, prosePath, prose, stats, failures: gen.failures, paras: gen.paras };
       c.grammarDamagePre = await damageOf(prose);
+      // 8.1: score during generation so the early-stop can gate on gen
+      const [earlyScore] = await scoreTexts([prose]);
+      if (earlyScore) c.score = earlyScore;
       candidates.push(c);
       console.log(`    coverage=${(gen.coverage * 100).toFixed(0)}% sents ${stats.sentencesBefore}->${stats.sentencesAfter} CV=${fmt(stats.cv, 3)} (x${fmt(stats.cvRatio, 2)}) damagePre=${fmt(c.grammarDamagePre)} copy=${fmt(stats.copyRate, 2)}${gen.failures.length ? ' FAIL: ' + gen.failures.map((f) => f.reason).join('; ') : ''}`);
       if (await stopCheck()) {
@@ -365,7 +368,43 @@ async function main() {
       const worst = nli.reduce((a, b) => (b.contradict > a.contradict ? b : a), { contradict: 0 });
       c.nli = { maxContradict: worst.contradict, meanEntail: nli.reduce((a, b) => a + (b.entail || 0), 0) / Math.max(1, nli.length) };
       console.log(`  ${c.id === 'X' ? '重組X' : 'cand' + c.id} risk=${fmt(c.risk)} NLI: maxContradict=${fmt(worst.contradict)} meanEntail=${fmt(c.nli.meanEntail)}`);
-      if (worst.contradict > 0.5) { console.log(`  ${c.id === 'X' ? '重組X' : 'cand' + c.id} NLI 矛盾過高，換下一個`); continue; }
+      if (worst.contradict > 0.5) {
+        // 8.1: targeted rescue — regen only the contradicting paragraphs, then
+        // re-verify the whole candidate. Skipping the candidate whole used to
+        // bury gen-star profiles over one bad paragraph.
+        const badIdx = nli.map((x, j) => ({ x, j })).filter((o) => o.x.contradict > 0.5).map((o) => o.j);
+        const badNames = badIdx.map((j) => `p${targetIdx[j]}`).join(',');
+        console.log(`  ${c.id === 'X' ? '重組X' : 'cand' + c.id} NLI 矛盾過高（${badNames}）→ 定向重生重試`);
+        const origParasR = targetIdx.map((i) => originalsByPara[i] || '');
+        const parasR = targetIdx.map((i) => c.paras[i] || originalsByPara[i] || '');
+        const { paras: rescued, fixed } = await rescueContradictions({
+          origParas: origParasR, paras: parasR, badIdx, lang,
+          log: (m) => console.log(`    ${m}`),
+        });
+        if (Object.keys(fixed).length === badIdx.length) {
+          const nli2 = await nliPairs(targetIdx.map((_, j) => [origParasR[j], rescued[j]]));
+          const worst2 = nli2.reduce((a, b) => (b.contradict > a.contradict ? b : a), { contradict: 0 });
+          if (worst2.contradict <= 0.5) {
+            targetIdx.forEach((i, j) => { c.paras[i] = rescued[j]; });
+            c.prose = targetIdx.map((i) => c.paras[i]).filter(Boolean).join('\n\n');
+            const newStats = candidateStats({ originalProse, prose: c.prose, lang });
+            newStats.coverage = c.stats.coverage;
+            c.stats = newStats;
+            c.grammarDamage = await damageOf(c.prose);
+            const [rs] = await scoreTexts([c.prose]);
+            if (rs) c.score = { ...c.score, p_ai_gen: rs.p_ai_gen, p_ai_edit: rs.p_ai_edit, perplexity: rs.perplexity };
+            c.nli = { maxContradict: worst2.contradict, meanEntail: nli2.reduce((a, b) => a + (b.entail || 0), 0) / Math.max(1, nli2.length) };
+            c.rescued = badIdx.map((j) => targetIdx[j]);
+            console.log(`  ${c.id === 'X' ? '重組X' : 'cand' + c.id} 救援成功：maxContradict ${fmt(worst.contradict)} → ${fmt(worst2.contradict)}，gen=${fmt(c.score?.p_ai_gen)}`);
+            chosen = c;
+            break;
+          }
+          console.log(`  ${c.id === 'X' ? '重組X' : 'cand' + c.id} 救援後仍矛盾（${fmt(worst2.contradict)}），換下一個`);
+        } else {
+          console.log(`  ${c.id === 'X' ? '重組X' : 'cand' + c.id} 救援未修復全部矛盾段，換下一個`);
+        }
+        continue;
+      }
       chosen = c;
       break;
     }
@@ -633,7 +672,7 @@ async function main() {
     fs.writeFileSync(v6Report, JSON.stringify(report, null, 1), 'utf8');
 
     const rows = pool.map((c) => `| ${c.crossover ? 'X' : c.id}${c.crossover ? '（重組）' : ''} | ${(c.stats.coverage * 100).toFixed(0)}% | ${fmt(c.stats.cv, 3)} | ${fmt(c.grammarDamagePre)} | ${fmt(c.grammarDamage)} | ${(c.surgeries || []).length} | ${fmt(c.score?.perplexity, 1)} | ${fmt(c.score?.p_ai_gen)} | ${fmt(c.score?.p_ai_edit)} | ${fmt(c.nli?.maxContradict)} | ${eligible.includes(c) ? fmt(c.risk) : '淘汰'} |`).join('\n');
-    const md = `# Workflow 8.0 風險卡
+    const md = `# Workflow 8.1 風險卡
 
 - 生成時間：${report.generatedAt}
 - 原稿：${input} · 語言 ${lang} · 型別 **${docType.form ? 'form／模板（V2 配方）' : 'essay（CV 帶）'}**
