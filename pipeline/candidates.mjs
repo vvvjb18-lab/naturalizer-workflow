@@ -508,6 +508,13 @@ export function mechanicalPolish(text, lang = 'en') {
     // if ... (Bandy et al., 2020))." → "for the benefit of all, even if ...
     // (Bandy et al., 2020)."
     t = t.replace(/\(([^()]{25,}?)\s*\(([^()]{0,90}?\d{4}[^()]*?)\)\s*\)\s*\./g, '$1 ($2).');
+    // 8.13: citation as sentence subject split by the period rule —
+    t = t.replace(/\((\d{4})\)\.\s+([A-Z][a-z]+ed)\b/g, (m, y, v) => `(${y}) ${v.charAt(0).toLowerCase()}${v.slice(1)}`);
+    t = t.replace(/\((\d{4})\)\.\s+([A-Z][a-z]+ed)\b/g, (m, y, v) => `(${y}) ${v.charAt(0).toLowerCase()}${v.slice(1)}`);
+    // 8.13: ")., " period-comma artifact
+    t = t.replace(/\)\.\s*,\s*/g, '), ');
+    // 8.13: hz-invented paragraph heading glue ("Conclusion To sum up, ...")
+    t = t.replace(/^(Conclusion|Introduction|Background|Methods|Results|Discussion|Analysis|Overview)\s+(?=[A-Z])/gm, '');
     // space before punctuation
     t = t.replace(/ +([.,;])/g, '$1');
   }
@@ -817,3 +824,48 @@ export async function applyWordBudget({
 
 function totalWordsStr(n, lang) { return lang === 'zh' ? `${n} 字` : `${n} words`; }
 function fmt3(x) { return Number(x).toFixed(3); }
+
+// ── 8.13: mechanical burstify — quality-preserving CV surgery ──────────────
+// The model-regen restructure introduced net-new grammar errors (client QA:
+// original > assault). This deterministic pass rebuilds sentence-length
+// variance with ZERO model involvement: split long sentences at coordination
+// boundaries, merge adjacent short ones. The original wording survives by
+// construction — no new grammar errors are possible beyond splice smoothness.
+export function mechanicalBurstify(text, lang = 'en') {
+  if (lang !== 'en') return { text, ops: 0 };
+  let ops = 0;
+  const sents = splitSentences(text, 'en').map((s) => s.text);
+  const pieces = [];
+  for (const s of sents) {
+    const w = s.trim().split(/\s+/).filter(Boolean).length;
+    if (w < 24) { pieces.push(s); continue; }
+    const boundaries = [...s.matchAll(/,\s+(and|but|yet|so)\s+/gi)];
+    let splitDone = false;
+    for (let bi = boundaries.length - 1; bi >= 0 && !splitDone; bi--) {
+      const b = boundaries[bi];
+      const left = s.slice(0, b.index).trim().replace(/[,;]$/, '');
+      let right = s.slice(b.index + b[0].length).trim();
+      if (left.split(/\s+/).length < 8 || right.split(/\s+/).length < 8) continue;
+      const conj = b[1].toLowerCase();
+      if (conj === 'and') right = right.charAt(0).toUpperCase() + right.slice(1);
+      else if (conj === 'but') right = 'However, ' + right.charAt(0).toLowerCase() + right.slice(1);
+      else if (conj === 'so') right = 'As a result, ' + right.charAt(0).toLowerCase() + right.slice(1);
+      else if (conj === 'yet') right = 'Even so, ' + right.charAt(0).toLowerCase() + right.slice(1);
+      pieces.push(left.replace(/[.!?]*$/, '') + '.');
+      pieces.push(right);
+      ops++; splitDone = true;
+    }
+    if (!splitDone) pieces.push(s);
+  }
+  const merged = [];
+  for (const p of pieces) {
+    const prev = merged[merged.length - 1];
+    const pw = prev ? prev.trim().split(/\s+/).filter(Boolean).length : 99;
+    const cw = p.trim().split(/\s+/).filter(Boolean).length;
+    if (prev && pw <= 7 && cw <= 7 && /[.!?]$/.test(prev)) {
+      merged[merged.length - 1] = prev.replace(/[.!?]$/, '') + '; ' + p.charAt(0).toLowerCase() + p.slice(1);
+      ops++;
+    } else merged.push(p);
+  }
+  return { text: merged.join(' '), ops };
+}

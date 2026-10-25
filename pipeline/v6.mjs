@@ -22,7 +22,7 @@ import {
   generateCandidate, candidateStats, rankCandidates,
   grammarScores, nliPairs, scoreFiles, closeDetector,
   detectDocType, surgicalRepair, assembleCrossover, shouldStopEarly,
-  mechanicalPolish, applyWordBudget, scoreTexts, citationConsistency, cloakNumbers, completeUnit, validateUnit,
+  mechanicalPolish, applyWordBudget, scoreTexts, citationConsistency, cloakNumbers, completeUnit, validateUnit, mechanicalBurstify,
   burstifyCandidate, cvOf,
 } from './candidates.mjs';
 import { grindParas, rescueContradictions, similarityPolish, styleGuard as styleGuardText } from './grind.mjs';
@@ -570,9 +570,31 @@ async function main() {
       const worstN = extreme ? (cfg.grind?.worstExtreme ?? 4) : gc.worst;
       const dryStop = extreme ? 2 : 1;
       const bandLo = (cfg.filters?.cvBand?.[0] ?? 0.45) * 0.9;
-      console.log(`=== 5.5/7 段級研磨（gen ${fmt(chosen.score?.p_ai_gen)} > ${gc.genGate}${extreme ? '，極端文檔：8 輪＋句級降級' : ''}，NLI 守門）===`);
+      console.log(`=== 5.5/7 段級研磨（gen ${fmt(chosen.score?.p_ai_gen)} > ${gc.genGate}${extreme ? '，極端文檔：句級降級＋CV 主導' : ''}，NLI 守門）===`);
+      // 8.13: mechanical burstify FIRST — deterministic split/merge, zero
+      // model involvement, zero quality risk (client QA: model restructure
+      // degraded quality below the original). Model burstify only as
+      // fallback if CV still short of 0.5.
+      let mechOps = 0;
+      if (extreme && chosen.stats?.cv > 0 && chosen.stats.cv < 0.5) {
+        console.log(`  8.13 攻堅：CV ${fmt(chosen.stats.cv, 3)} 低於交付線 0.5——機械節奏手術（原詞保留）`);
+        for (const i of targetIdx) {
+          const r = mechanicalBurstify(chosen.paras[i] || '', lang);
+          if (r.ops) { chosen.paras[i] = r.text; mechOps += r.ops; }
+        }
+        if (mechOps) {
+          chosen.prose = targetIdx.map((i) => chosen.paras[i]).filter(Boolean).join('\n\n');
+          const stM = candidateStats({ originalProse, prose: chosen.prose, lang });
+          stM.coverage = chosen.stats.coverage;
+          chosen.stats = stM;
+          chosen.grammarDamage = await damageOf(chosen.prose);
+          const [scM] = await scoreTexts([chosen.prose]);
+          if (scM) chosen.score = { ...chosen.score, ...scM };
+          console.log(`  機械手術後：CV ${fmt(stM.cv, 3)} gen ${fmt(chosen.score?.p_ai_gen)}（${mechOps} ops）`);
+        }
+      }
       if (extreme && chosen.stats?.cv > 0 && chosen.stats.cv < bandLo) {
-        console.log(`  8.4 攻堅：CV ${fmt(chosen.stats.cv, 3)} 低於帶——先結構重造（burstiness）`);
+        console.log(`  8.4 攻堅：CV ${fmt(chosen.stats.cv, 3)} 仍低於帶——模型結構重造（備援）`);
         const { moves } = await burstifyCandidate({
           c: chosen, originalsByPara, targetIdx, lang,
           rounds: cfg.lowCvFallback?.rounds ?? 3, worst: cfg.lowCvFallback?.worst ?? 4,
@@ -588,6 +610,13 @@ async function main() {
         if (scB) chosen.score = { ...chosen.score, ...scB };
         console.log(`  結構重造後：CV ${fmt(stB.cv, 3)} gen ${fmt(chosen.score?.p_ai_gen)}（${moves.length} 段）`);
       }
+      // 8.13: quality-preserving gate — with CV ≥ 0.5 and gen ≤ 0.85 the
+      // delivery ships WITHOUT gen grinding (calibration: 0.749/0.539 → 0%,
+      // 0.762/0.393 → 8%); every model mutation avoided is quality preserved.
+      if (extreme && (chosen.stats?.cv ?? 0) >= 0.5 && (chosen.score?.p_ai_gen ?? 1) <= 0.85) {
+        grindInfo = { action: 'skipped', reason: 'CV ≥ 0.5 且 gen ≤ 0.85——質量保持模式' };
+        console.log('  CV ≥ 0.5 且 gen ≤ 0.85 → 跳過研磨（質量保持模式）');
+      } else {
       const idxList = targetIdx;
       const origParas = idxList.map((i) => originalsByPara[i] || '');
       const parasIn = idxList.map((i) => chosen.paras[i] || originalsByPara[i] || '');
@@ -623,6 +652,7 @@ async function main() {
         chosen.stats = newStats;
         grindInfo = { action: 'applied', preGen, postGen, preDamage, postDamage, stats: gstats };
         console.log(`  grind 採用：整份 gen ${fmt(preGen)} → ${fmt(postGen)}，傷率 ${fmt(postDamage)}`);
+      }
       }
     }
 
