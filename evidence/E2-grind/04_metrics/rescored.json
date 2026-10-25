@@ -1,0 +1,75 @@
+[
+ {
+  "name": "E2-grind (turnitai)",
+  "label": 0,
+  "trueGen": 0.03021192564987219,
+  "cv": 0.621,
+  "words": 534,
+  "ppl": 30.590021077608537
+ },
+ {
+  "name": "E2_oneclick82 (turnitai 0 / origincheck 3)",
+  "label": 3,
+  "trueGen": 0.21764517072669307,
+  "cv": 0.579,
+  "words": 557,
+  "ppl": 22.590907720005355
+ },
+ {
+  "name": "H2_ideal (turnitai 1)",
+  "label": 1,
+  "trueGen": 0.4487667490965104,
+  "cv": 0.681,
+  "words": 953,
+  "ppl": 213.78421274243453
+ },
+ {
+  "name": "H4_prodLT (turnitai 3)",
+  "label": 3,
+  "trueGen": 0.3406363993707366,
+  "cv": 0.619,
+  "words": 979,
+  "ppl": 191.86269508537828
+ },
+ {
+  "name": "assault-0649 (origincheck 8)",
+  "label": 8,
+  "trueGen": 0.7620776649334985,
+  "cv": 0.393,
+  "words": 893,
+  "ppl": 25.300546938549072
+ },
+ {
+  "name": "assault-0782 (origincheck 41)",
+  "label": 41,
+  "trueGen": 0.984210879254886,
+  "cv": 0.378,
+  "words": 1211,
+  "ppl": 357.1980612229552
+ },
+ {
+  "name": "highAI-0983 (origincheck 98)",
+  "label": 98,
+  "trueGen": 0.982728942096753,
+  "cv": 0.275,
+  "words": 671,
+  "ppl": 20.92405627817864
+ },
+ {
+  "name": "assault-0573 (origincheck 0)",
+  "label": 0,
+  "trueGen": 0.7494886039923399,
+  "cv": 0.539,
+  "words": 1025,
+  "ppl": 304.0640347714784
+ },
+ {
+  "name": "E2_oneclick81 (turnitai 0/22 — file lost, PDF recover)",
+  "label": 0,
+  "trueGen": 0.5285038576916764,
+  "cv": 0.69,
+  "words": 723,
+  "ppl": 224.04446159778314,
+  "note": "22% 是查重相似度；AI 實為 0%"
+ }
+]

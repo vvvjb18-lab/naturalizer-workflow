@@ -12,7 +12,8 @@ const file = path.resolve(args[0] || '');
 if (!file || !fs.existsSync(file)) { console.error('用法：node assault.mjs <file.docx> [--attempts N] [--threshold 0.65]'); process.exit(1); }
 const flag = (name, dflt) => { const i = args.indexOf(name); return i >= 0 ? Number(args[i + 1]) : dflt; };
 const ATTEMPTS = flag('--attempts', 3);
-const THRESHOLD = flag('--threshold', 0.75);
+const CV_TARGET = flag('--cv-target', 0.5);   // 8.12：交付判據 CV 主導（九點校準）
+const GEN_MAX = flag('--gen-max', 0.85);
 const outDir = path.dirname(file);
 const base = path.basename(file).replace(/\.[^.]+$/, '');
 
@@ -59,7 +60,7 @@ for (let a = 1; a <= ATTEMPTS; a++) {
     const delivery = rep.files?.aDocx || path.join(runDir, `${base}.v6-A.docx`);
     best.delivery = fs.existsSync(delivery) ? delivery : null;
   }
-  if (best.gen <= THRESHOLD) { console.log(`達標（gen ≤ ${THRESHOLD}），停止重試`); break; }
+  if (best.cv != null && best.cv >= CV_TARGET && best.gen <= GEN_MAX) { console.log(`達標（CV ${Number(best.cv).toFixed(2)} ≥ ${CV_TARGET} 且 gen ≤ ${GEN_MAX}），停止重試`); break; }
 }
 
 console.log(`\n=== 攻堅結果：attempt ${best.attempt} · gen ${best.gen === Infinity ? '—' : Number(best.gen).toFixed(3)} ===`);
@@ -71,7 +72,7 @@ if (best.delivery) {
   const mdSrc = best.report && path.join(outDir, `.assault-${best.attempt}`, `${base}.v6.report.md`);
   if (md && mdSrc && fs.existsSync(mdSrc)) fs.copyFileSync(mdSrc, md);
 }
-if (best.gen > THRESHOLD) {
+if (!(best.cv != null && best.cv >= CV_TARGET && best.gen <= GEN_MAX)) {
   console.log(`⚠ ${ATTEMPTS} 次嘗試均未達 gen ≤ ${THRESHOLD}——建議人工覆核或要求客戶提供草稿種子`);
   process.exit(2);
 }

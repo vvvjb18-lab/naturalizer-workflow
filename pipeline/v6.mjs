@@ -402,7 +402,7 @@ async function main() {
         chosen = fallbackPool.sort((a, b) => (a.score?.p_ai_gen ?? 1) - (b.score?.p_ai_gen ?? 1))[0];
         bandFallback = {
           cv: chosen.stats.cv, band: cfg.filters?.cvBand ?? [0.45, 0.65],
-          reason: '全部候選 CV 低於校準帶下限（此文檔族未經 Turnitin 驗證）',
+          reason: 'CV 低於交付線 0.5（九點校準：CV<0.37 實測 41-98%）——burstify 後仍不足',
         };
         console.log(`⚠ 帶外交付：選 CV/分數最佳的 cand${chosen.id}（CV ${fmt(chosen.stats.cv, 3)} gen ${fmt(chosen.score?.p_ai_gen)}）——此文檔族的 CV 帶未經 Turnitin 校準，交付前請知悉風險`);
       } else {
@@ -576,6 +576,7 @@ async function main() {
         const { moves } = await burstifyCandidate({
           c: chosen, originalsByPara, targetIdx, lang,
           rounds: cfg.lowCvFallback?.rounds ?? 3, worst: cfg.lowCvFallback?.worst ?? 4,
+          cvTarget: 0.5,
           log: (m) => console.log(`  ${m}`),
         });
         chosen.prose = targetIdx.map((i) => chosen.paras[i]).filter(Boolean).join('\n\n');

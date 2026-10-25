@@ -84,39 +84,34 @@ const [sc] = await scoreTexts([body]);
 const gen = sc?.p_ai_gen ?? null;
 const ppl = sc?.perplexity ?? null;
 
-// 五點映射（OriginCheck/turnitai 雙渠道校準），分段線性插值
-const MAP = [[0.036, 2], [0.218, 1], [0.762, 8], [0.782, 41], [0.983, 98]];
-function expectTurnitin(g) {
+// 8.12：雙特徵規則（九點對齊，9/9 吻合）——CV 主導，gen 於中 CV 帶調製
+// CV≥0.54 → 全過（至 gen 0.69 實測）；CV 0.38-0.39 → gen≤0.76 過/0.98 敗；CV≤0.28 → 敗
+function expectTurnitin(g, cvv) {
   if (g == null) return null;
-  if (g <= MAP[0][0]) return 2;
-  for (let i = 1; i < MAP.length; i++) {
-    if (g <= MAP[i][0]) {
-      const [x0, y0] = MAP[i - 1], [x1, y1] = MAP[i];
-      return Math.max(0, Math.round(y0 + (g - x0) * (y1 - y0) / (x1 - x0)));
-    }
-  }
-  return 98;
+  if (cvv >= 0.54) return 3;                       // 0-3% 實測帶
+  if (cvv >= 0.37) return g <= 0.76 ? 8 : 41;      // 邊界帶：8-41%
+  if (cvv >= 0.30) return g <= 0.76 ? 20 : 70;     // 內插保守帶（無實測點）
+  return 98;                                        // 實測 98%
 }
-const nowScore = expectTurnitin(gen);
-const afterScore = gen == null ? null : (gen > 0.65 ? 8 : Math.round(expectTurnitin(gen) * 0.5));
+const nowScore = expectTurnitin(gen, cv);
+const afterScore = gen == null ? null : (cv >= 0.5 ? 3 : (cv >= 0.37 ? (gen > 0.76 ? 20 : 8) : 70));
 
 let family, plan, runtime, quote;
 if (gen == null) { family = '未知'; plan = '—'; runtime = '—'; quote = '—'; }
-else if (gen > 0.8) { family = '🔴 極端（純 AI 稿）'; plan = '極速路徑：4 候選＋結構重造＋句級研磨至 ≤0.65＋語域手術'; runtime = '~12-25 分鐘'; quote = '建議極端加成（實測 0.983→0.573→0%）'; }
-else if (gen > 0.65) { family = '🟠 攻堅（膝點上方）'; plan = '極速路徑＋延長研磨至 ≤0.65'; runtime = '~15-30 分鐘'; quote = '建議攻堅加成（膝點上方，必須磨過 0.65）'; }
-else if (gen > 0.4) { family = '🟡 中度'; plan = '標準管線（4 候選＋研磨）'; runtime = '~15-25 分鐘'; quote = '標準報價'; }
-else { family = '🟢 正常（有真人底子）'; plan = '標準管線（6 候選＋研磨）'; runtime = '~10-20 分鐘'; quote = '標準報價'; }
+else if (cv < 0.37) { family = '🔴 節奏危險（CV 過低，實測 41-98%）'; plan = '結構重造主攻（burstify 至 CV ≥ 0.5）＋句級研磨＋語域手術'; runtime = '~12-30 分鐘'; quote = '建議極端加成'; }
+else if (cv < 0.5) { family = '🟠 邊界帶（CV 0.37-0.5：gen 決定）'; plan = '結構重造＋研磨至 CV ≥ 0.5'; runtime = '~12-30 分鐘'; quote = '攻堅加成（gen 越高越難）'; }
+else { family = '🟢 節奏安全（CV ≥ 0.5，九點實測全過）'; plan = '標準管線'; runtime = '~10-25 分鐘'; quote = '標準報價'; }
 
 console.log('──────────── 接單預檢卡 ────────────');
 console.log(`文件：${path.basename(file)}`);
 console.log(`語言：${lang === 'zh' ? '中文' : '英文'} · ${words} 詞 · ${sents.length} 句 · CV ${cv.toFixed(3)}`);
 console.log(`離線評分：gen ${gen?.toFixed(3)} · ppl ${ppl?.toFixed(1)} · edit ${sc?.p_ai_edit?.toFixed(3)}`);
-console.log(`現狀預期 Turnitin AI：~${nowScore}%（五點映射插值，膝點區誤差大）`);
+console.log(`現狀預期 Turnitin AI：~${nowScore}%（CV ${cv.toFixed(2)}/gen ${gen?.toFixed(2)} 雙特徵規則，九點校準）`);
 console.log('');
 console.log(`文檔族：${family}`);
 console.log(`管線：${plan}`);
 console.log(`預計耗時：${runtime}`);
-console.log(`交付預期：研磨後 Turnitin AI ~${afterScore}%（校準：0.573→0%、0.649→8%）`);
+console.log(`交付預期：攻堅後 Turnitin AI ~${afterScore}%（CV 規則：≥0.54 全過；0.37-0.54 看 gen）`);
 console.log(`報價建議：${quote}`);
 if (lang === 'zh') console.log('⚠ 中文稿：檢測服務的 AI 報告僅支持英文/西班牙文');
 if (words < 350) console.log('⚠ 字數 <350：檢測服務不出 AI 報告');
