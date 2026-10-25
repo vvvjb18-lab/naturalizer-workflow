@@ -17,3 +17,5 @@ polish/polish.config.json
 engine/
 models/
 *.gguf
+
+pipeline/models/

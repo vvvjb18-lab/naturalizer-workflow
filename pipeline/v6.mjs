@@ -59,6 +59,8 @@ const HELP = `v6.mjs — Workflow 8.0（選擇式管線：早停 × 手術 × �
   --max-words N        7.6 字數預算：交付上限 N 詞（刪除優先，超 30% 削幅需 --force-budget）
   --floor-words N      字數下限（作業最少字數；低於即報錯不交付）
   --force-budget       允許超過 30% 的刪減幅度（建議先人工確認內容取捨）
+  --style-guide <json> 8.16 風格引導：注入 style_vector.py 的風格向量 JSON
+  --seed <txt|json>    8.16 人類種子：語音轉錄 txt（自動抽特徵）或已抽好的 JSON
 `;
 
 function parseArgs(argv) {
@@ -147,6 +149,35 @@ async function main() {
   const base = path.basename(input, ext);
   const workDir = path.join(outDir, `.v6-${base}`);
   fs.mkdirSync(workDir, { recursive: true });
+
+  // 8.16 opt-in style guidance (default: empty → prompt stays byte-exact)
+  let styleGuide = '';
+  let styleMeta = null;
+  if (args.k['style-guide'] || args.k.seed) {
+    try {
+      let styleJson;
+      if (args.k.seed) {
+        const seedPath = path.resolve(String(args.k.seed));
+        if (seedPath.toLowerCase().endsWith('.json')) {
+          styleJson = JSON.parse(fs.readFileSync(seedPath, 'utf8'));
+        } else {
+          const outPath = path.join(workDir, 'seed.json');
+          const r = spawnSync('python', [path.join(HERE, 'seed_extractor.py'), seedPath, '--out', outPath], { encoding: 'utf8', timeout: 120000 });
+          if (r.status !== 0) throw new Error(`seed_extractor: ${String(r.stderr).slice(0, 300)}`);
+          styleJson = JSON.parse(fs.readFileSync(outPath, 'utf8'));
+        }
+      } else {
+        styleJson = JSON.parse(fs.readFileSync(path.resolve(String(args.k['style-guide'])), 'utf8'));
+      }
+      const { buildStyleGuidance } = await import('./prompt_injector.mjs');
+      const built = buildStyleGuidance(styleJson);
+      styleGuide = built.guide;
+      styleMeta = built.meta;
+      console.log(`=== 8.16 風格引導（${built.meta.source}，${built.meta.chars} 字元，rhythm μ=${built.meta.mean ?? '—'}）===`);
+    } catch (e) {
+      throw new Error(`風格引導載入失敗：${e.message}`);
+    }
+  }
 
   try {
     // 1 ── plan + doc type ─────────────────────────────────────────────────
@@ -271,7 +302,7 @@ async function main() {
       const sampling = cfg.samplings[k] || { temperature: 1.0, topP: 0.95 };
       console.log(`  candidate ${k + 1}/${cfg.candidates} (temp ${sampling.temperature}, top_p ${sampling.topP})`);
       const gen = await generateCandidate({
-        plan, sampling, retries: cfg.unitRetries ?? 2, lang,
+        plan, sampling, retries: cfg.unitRetries ?? 2, lang, styleGuide,
         log: (m) => console.log(`    ${m}`),
       });
       const prose = Object.keys(gen.paras).length
@@ -1036,6 +1067,7 @@ async function main() {
       cvGuard, formCheck,
       budget: budgetStats,
       grind: grindInfo,
+      styleGuide: styleMeta,
       similarityPolish: simInfo,
       citationCheck: citeCheck ? { checked: citeCheck.checked, references: citeCheck.references, mismatches: citeCheck.mismatches, fixes: citeCheck.fixes } : null,
       qualitySurgery: qFix,

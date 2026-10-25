@@ -34,9 +34,14 @@ const INSTR = "Rewrite the text below so it reads like a person wrote it, not a 
 const SEP = "\n\n### Rewritten:\n\n";
 const FINGERPRINT = 'cc51d66b4c593fbe';
 
-export function buildPrompt(draft) {
-  const prompt = INSTR + "\n\n" + draft.trim() + SEP;
-  const fp = createHash('sha256').update(buildPromptShaInput()).digest('hex').slice(0, 16);
+// 8.16: optional style guidance (style_vector.py / seed_extractor.py ->
+// prompt_injector.mjs). Appended AFTER the hz instruction so every
+// existing constraint (facts, numbers, quotations) still stands;
+// default runs pass nothing and stay byte-identical to hz.
+export function buildPrompt(draft, styleGuide = "") {
+  const instr = styleGuide ? INSTR + "\n\n" + styleGuide : INSTR;
+  const prompt = instr + "\n\n" + draft.trim() + SEP;
+  const fp = createHash("sha256").update(buildPromptShaInput()).digest("hex").slice(0, 16);
   if (fp !== FINGERPRINT) throw new Error(`hz prompt fingerprint drifted: ${fp} != ${FINGERPRINT}`);
   return prompt;
 }
@@ -109,14 +114,15 @@ export function cloakNumbers(text) {
   };
 }
 
-export async function completeUnit({ text, sampling = {}, timeoutMs = 600000, instruction = '' }) {
+export async function completeUnit({ text, sampling = {}, timeoutMs = 600000, instruction = '', styleGuide = '' }) {
   const tokens = await countTokens(text);
   // 7.6 word-budget mode: same hz rewrite instruction plus an explicit length
   // directive. Deliberately outside the byte-exact fingerprint contract — this
   // is our own extension, never claims to be hz's prompt.
+  // 8.16: style guidance rides along in either mode.
   const prompt = instruction
-    ? `${INSTR}\n\n${instruction}\n\n${text.trim()}${SEP}`
-    : buildPrompt(text);
+    ? `${INSTR}\n\n${instruction}${styleGuide ? `\n\n${styleGuide}` : ''}\n\n${text.trim()}${SEP}`
+    : buildPrompt(text, styleGuide);
   const body = {
     prompt,
     n_predict: instruction
@@ -169,7 +175,7 @@ export function validateUnit(before, after, lang = 'en') {
 // plan = docx_bridge.py `plan` output. Returns per-unit rewrites for every
 // target paragraph; a unit that never validates after `retries` marks the
 // candidate as broken (coverage < 1) instead of silently dropping prose.
-export async function generateCandidate({ plan, sampling = {}, retries = 2, lang = 'en', log = () => {} }) {
+export async function generateCandidate({ plan, sampling = {}, retries = 2, lang = 'en', log = () => {}, styleGuide = '' }) {
   const unitTexts = {};
   const failures = [];
   for (const [paraIdx, target] of Object.entries(plan.targets)) {
@@ -182,7 +188,7 @@ export async function generateCandidate({ plan, sampling = {}, retries = 2, lang
           const isLast = attempt === retries;
           const sampling2 = isLast ? { temperature: 0.7, topP: 0.9 } : sampling;
           const { cloaked, restore } = cloakNumbers(unit.text);
-          const outRaw = await completeUnit({ text: cloaked, sampling: sampling2 });
+          const outRaw = await completeUnit({ text: cloaked, sampling: sampling2, styleGuide });
           const out = restore(outRaw);
           const v = validateUnit(unit.text, out, lang);
           if (v.ok) {
