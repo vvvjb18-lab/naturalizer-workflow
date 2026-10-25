@@ -9,6 +9,44 @@ import { spawnSync } from 'node:child_process';
 import { scoreTexts, closeDetector } from './detector_client.mjs';
 import { detectLang, splitSentences, wordCount } from '../polish/src/text.mjs';
 
+// 8.10: canary self-drift check — the offline scorer is local and static, so
+// it cannot see Turnitin updates (that needs a code: see canary.json rule),
+// but it CAN detect our own drift (model/daemon changes). Run with --canary.
+if (process.argv.includes('--canary')) {
+  const manifest = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, 'canary', 'canary.json'), 'utf8'));
+  console.log('──── 金絲雀離線自漂移檢查 ────');
+  let drift = false;
+  for (const c of manifest.canaries) {
+    const p = path.join(import.meta.dirname, 'canary', c.file);
+    let txt = fs.readFileSync(p, 'utf8');
+    if (p.endsWith('.docx')) {
+      const out = p + '.precheck.txt';
+      const rr = spawnSync('python', [path.join(import.meta.dirname, 'docx_bridge.py'), 'fulltext', p, out], { encoding: 'utf8' });
+      if (rr.status !== 0) { console.log(`✗ ${c.file}: docx 解析失敗`); drift = true; continue; }
+      txt = fs.readFileSync(out, 'utf8');
+    }
+    const body = (() => {
+      const paras = txt.split(/\n\s*\n/).map((x) => x.trim()).filter(Boolean);
+      const outP = [];
+      let refs = false;
+      for (const pp of paras) {
+        if (!refs && /^(references?|works cited|bibliography)\s*:?\s*$/i.test(pp)) { refs = true; continue; }
+        if (!refs) outP.push(pp);
+      }
+      return (outP.length ? outP : paras).join('\n\n');
+    })();
+    const [s] = await scoreTexts([body]);
+    const g = s?.p_ai_gen ?? null;
+    const delta = g == null ? null : Math.abs(g - c.offlineGen);
+    const bad = delta != null && delta > 0.03;
+    if (bad) drift = true;
+    console.log(`${bad ? '✗' : '✓'} ${c.file}: 已知 ${c.offlineGen.toFixed(3)} → 現測 ${g?.toFixed(3)}（Δ${delta?.toFixed(3)}）`);
+  }
+  console.log(drift ? '✗ 本地評分器漂移 >0.03——先排查模型/daemon 變更，再做映射決策' : '✓ 本地評分器無漂移');
+  await closeDetector();
+  process.exit(drift ? 2 : 0);
+}
+
 const file = path.resolve(process.argv[2] || '');
 if (!file || !fs.existsSync(file)) { console.error('用法：node precheck.mjs <file.docx|txt>'); process.exit(1); }
 
@@ -47,7 +85,7 @@ const gen = sc?.p_ai_gen ?? null;
 const ppl = sc?.perplexity ?? null;
 
 // 五點映射（OriginCheck/turnitai 雙渠道校準），分段線性插值
-const MAP = [[0.034, 2], [0.573, 0], [0.649, 8], [0.782, 41], [0.983, 98]];
+const MAP = [[0.036, 2], [0.218, 1], [0.762, 8], [0.782, 41], [0.983, 98]];
 function expectTurnitin(g) {
   if (g == null) return null;
   if (g <= MAP[0][0]) return 2;

@@ -1054,6 +1054,10 @@ ${formCheck ? `\n## form 檢查\n\n引用 ${formCheck.citations} 個 / 數字 ${
       const finalCopy = path.join(outDir, `${finalName}.docx`);
       fs.copyFileSync(bDocx, finalCopy);
       console.log(`交付檔：${finalCopy}`);
+    // 8.10: final rescore — the delivery label must be post-ALL-steps (the
+    // canary caught pre-surgery labels being 0.1-0.2 stale-low).
+    const [finScore] = await scoreTexts([chosen.prose]);
+    if (finScore) console.log(`交付終評：gen ${fmt(finScore.p_ai_gen)} ppl ${fmt(finScore.perplexity, 1)} edit ${fmt(finScore.p_ai_edit)}`);
     }
     console.log(`總耗時：${Math.round((Date.now() - T0) / 1000)}s（畫像 ${Math.round((profile.elapsedMs || 0) / 1000)}s）`);
   } finally {

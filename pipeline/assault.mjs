@@ -12,16 +12,33 @@ const file = path.resolve(args[0] || '');
 if (!file || !fs.existsSync(file)) { console.error('用法：node assault.mjs <file.docx> [--attempts N] [--threshold 0.65]'); process.exit(1); }
 const flag = (name, dflt) => { const i = args.indexOf(name); return i >= 0 ? Number(args[i + 1]) : dflt; };
 const ATTEMPTS = flag('--attempts', 3);
-const THRESHOLD = flag('--threshold', 0.65);
+const THRESHOLD = flag('--threshold', 0.75);
 const outDir = path.dirname(file);
 const base = path.basename(file).replace(/\.[^.]+$/, '');
 
-console.log(`=== 極端文檔 best-of-${ATTEMPTS} 攻堅（目標 gen ≤ ${THRESHOLD}）===`);
+console.log(`=== 極端文檔 best-of-${ATTEMPTS} 攻堅（目標檔案真實分 ≤ ${THRESHOLD}）===`);
 
 const best = { gen: Infinity, report: null, delivery: null, attempt: 0 };
 for (let a = 1; a <= ATTEMPTS; a++) {
   const runDir = path.join(outDir, `.assault-${a}`);
   fs.mkdirSync(runDir, { recursive: true });
+  // 8.10: resume — a previous crashed/killed run's completed attempts are
+  // reusable; only missing attempts are spawned.
+  const priorReport = path.join(runDir, `${base}.v6.report.json`);
+  if (fs.existsSync(priorReport)) {
+    try {
+      const rep = JSON.parse(fs.readFileSync(priorReport, 'utf8'));
+      const gen = rep.chosenScore?.p_ai_gen ?? Infinity;
+      console.log(`─── attempt ${a}/${ATTEMPTS}（續用已有結果）───`);
+      console.log(`attempt ${a}: 交付 gen ${Number(gen).toFixed(3)}`);
+      if (gen < best.gen) {
+        best.gen = gen; best.report = rep; best.attempt = a;
+        const delivery = rep.files?.aDocx || path.join(runDir, `${base}.v6-A.docx`);
+        best.delivery = fs.existsSync(delivery) ? delivery : null;
+      }
+      continue;
+    } catch { /* corrupt report → re-run this attempt */ }
+  }
   console.log(`\n─── attempt ${a}/${ATTEMPTS} ───`);
   const code = await new Promise((resolve) => {
     const child = spawn(process.execPath, [path.join(import.meta.dirname, 'v6.mjs'), file, '--out-dir', runDir, '--final-name', 'assault-final'], { cwd: import.meta.dirname, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });

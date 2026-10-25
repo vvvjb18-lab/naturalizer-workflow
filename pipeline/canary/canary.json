@@ -1,0 +1,29 @@
+{
+ "rule": "每批新碼的第一碼打金絲雀（順序 0649 → 0983 → oneclick82）。實測偏離已知分 ±10%（AI%）即觸發重校準告警。離線自漂移：node precheck.mjs --canary，偏離 ±0.05 表示本地評分器/模型變了。 金絲雀已抓到標籤過期問題（8.9 前交付檔的分數是手術前的）。",
+ "canaries": [
+  {
+   "file": "assault-0649.txt",
+   "offlineGen": 0.762,
+   "turnitinAI": {
+    "origincheck": 8
+   },
+   "note": "原記錄 0.649 為研磨後/手術前分數——8.9 前手術不改 chosenScore，標籤過期"
+  },
+  {
+   "file": "highAI-0983.txt",
+   "offlineGen": 0.983,
+   "turnitinAI": {
+    "origincheck": 98
+   }
+  },
+  {
+   "file": "e2-oneclick82.docx",
+   "offlineGen": 0.218,
+   "turnitinAI": {
+    "turnitai": 0,
+    "origincheck": 3
+   },
+   "note": "原記錄 0.034 同上（tier-2 手術後真實分）"
+  }
+ ]
+}

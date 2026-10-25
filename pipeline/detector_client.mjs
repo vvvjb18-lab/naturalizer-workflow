@@ -5,7 +5,7 @@
 // load. Crashes are transparent: pending calls reject and the next call
 // respawns the daemon.
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
 
@@ -17,7 +17,19 @@ let buf = '';
 const pending = new Map();
 let crashed = false;
 
+// 8.10: stale-daemon pre-kill — leaked daemons (~7.5GB each) from crashed
+// parents trigger os error 1455 (pagefile exhaustion) on the next spawn.
+// Kills only processes whose command line contains detector_daemon.py.
+export function killStaleDaemons() {
+  try {
+    const r = spawnSync('powershell', ['-NoProfile', '-Command',
+      "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | Where-Object { $_.CommandLine -like '*detector_daemon.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"], { timeout: 20000 });
+    return r.status === 0;
+  } catch { return false; }
+}
+
 function start() {
+  killStaleDaemons();
   proc = spawn('python', [DAEMON], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   crashed = false;
   buf = '';
