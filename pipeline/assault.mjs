@@ -17,7 +17,7 @@ const GEN_MAX = flag('--gen-max', 0.85);
 const outDir = path.dirname(file);
 const base = path.basename(file).replace(/\.[^.]+$/, '');
 
-console.log(`=== 極端文檔 best-of-${ATTEMPTS} 攻堅（目標檔案真實分 ≤ ${THRESHOLD}）===`);
+console.log(`=== 極端文檔 best-of-${ATTEMPTS} 攻堅（目標：CV ≥ ${CV_TARGET} 且 gen ≤ ${GEN_MAX}）===`);
 
 const best = { gen: Infinity, report: null, delivery: null, attempt: 0 };
 for (let a = 1; a <= ATTEMPTS; a++) {
@@ -73,6 +73,6 @@ if (best.delivery) {
   if (md && mdSrc && fs.existsSync(mdSrc)) fs.copyFileSync(mdSrc, md);
 }
 if (!(best.cv != null && best.cv >= CV_TARGET && best.gen <= GEN_MAX)) {
-  console.log(`⚠ ${ATTEMPTS} 次嘗試均未達 gen ≤ ${THRESHOLD}——建議人工覆核或要求客戶提供草稿種子`);
+  console.log(`⚠ ${ATTEMPTS} 次嘗試均未達 CV ≥ ${CV_TARGET} 且 gen ≤ ${GEN_MAX}——建議人工覆核或要求客戶提供草稿種子`);
   process.exit(2);
 }
