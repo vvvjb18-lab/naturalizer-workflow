@@ -1,23 +1,42 @@
 #!/usr/bin/env python3
-"""detector_bridge.py — offline AI-likeness scoring for Workflow 6.0.
+"""detector_bridge.py — offline AI-likeness scoring for Workflow 6.0+.
 
-Three independent signals, all CPU, no cloud:
-  perplexity  mean NLL under GPT-2 (124M). AI-polished text sits lower;
-              humanizer output sits higher. Classic GPTZero-style feature.
-  p_ai_gen    Oxidane/tmr-ai-text-detector (RoBERTa-base, RAID-trained).
-              Probability the text is AI-generated. Index 1 = AI.
-  p_ai_edit   adaptive-classifier/ai-detector (EditLens, ICLR 2026).
-              Probability the text is AI-generated OR AI-edited.
+Signals, all CPU, no cloud:
+  perplexity   mean NLL under GPT-2 (124M). AI-polished text sits lower;
+               humanizer output sits higher. Classic GPTZero-style feature.
+  p_ai_gen     Oxidane/tmr-ai-text-detector (RoBERTa-base, RAID-trained).
+               Probability the text is AI-generated. Index 1 = AI.
+  p_ai_edit    adaptive-classifier/ai-detector (EditLens, ICLR 2026).
+               Probability the text is AI-generated OR AI-edited.
 
-Long texts are split into <=512-token windows; each detector's score is the
-token-weighted mean over windows, so a 700-word essay is scored whole instead
-of silently truncating.
+8.14 token-level features (one GPT-2 forward pass serves all of them):
+  mean_surprisal      mean token surprisal in nats (= log perplexity). Baseline.
+  surprisal_entropy2  entropy of the discretized second-order differences of
+                      the token surprisal sequence (DivEye). Models "rhythmic
+                      unpredictability" — the evolution of predictability —
+                      which mean perplexity cannot see.
+  lrr                 DetectLLM Log-Rank Ratio: mean log of each token's rank
+                      in the predicted vocabulary distribution. Lower = the
+                      model keeps picking likely tokens = more AI-like.
+  burstiness_cv       coefficient of variation of sentence lengths. Primary
+                      signal in commercial detectors (Turnitin/GPTZero); our
+                      9-point calibration: passing texts 0.54-0.69, pure AI
+                      0.27-0.39.
+  pattr               penalty-adjusted type-token ratio (lexical diversity,
+                      length-corrected).
+  ai_risk_score       provisional calibrated blend (CV-dominant per the 9-point
+                      mapping): 0.55*cv_risk + 0.45*p_ai_gen. Recalibrate as
+                      labelled points grow.
+
+Long texts are split into <=512-token windows; each windowed score is the
+token-weighted mean, so a 700-word essay is scored whole instead of silently
+truncating.
 
 Usage:
   python detector_bridge.py score text1.txt [text2.txt ...]     → JSON array
   python detector_bridge.py score -                              → stdin, one entry
 """
-import sys, os, json, math
+import sys, os, json, math, re
 
 os.environ.setdefault("HF_HOME", os.path.join(os.path.dirname(os.path.abspath(__file__)), ".hf-cache"))
 os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
@@ -26,6 +45,11 @@ os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 
 import torch
 torch.set_grad_enabled(False)
+# The 12B llama-server shares this box; cap intra-op threads so BLAS does not
+# fight it for cores (Qwen report: oversubscription is the top CPU pitfall).
+torch.set_num_threads(max(2, min(4, os.cpu_count() or 4)))
+
+import numpy as np
 
 _MODELS = {}
 
@@ -55,34 +79,93 @@ def _editlens():
     return _MODELS["editlens"]
 
 
-def perplexity(text: str):
-    """Mean-NLL perplexity under GPT-2 with the standard sliding-window recipe."""
+def gpt2_surprisal_features(text: str):
+    """One GPT-2 sliding-window pass → {perplexity, mean_surprisal,
+    surprisal_entropy2, lrr}. Token-level surprisal (and rank) of every
+    predicted token; the aggregate perplexity is now a by-product."""
     if not text.strip():
         return None
     tok, model = _gpt2()
     enc = tok(text, return_tensors="pt")
     seq_len = enc.input_ids.size(1)
-    if seq_len < 2:
+    if seq_len < 8:
         return None
     max_len = min(1024, model.config.n_positions)
     stride = 512
-    nlls, n_tok = [], 0
+    surprisals, ranks = [], []
     prev_end = 0
     for begin in range(0, seq_len, stride):
         end = min(begin + max_len, seq_len)
         trg_len = end - prev_end
-        ids = enc.input_ids[:, begin:end]
-        target = ids.clone()
-        if trg_len < target.size(1):
-            target[:, :-trg_len] = -100
-        out = model(ids, labels=target)
-        n = int((target != -100).sum())
-        nlls.append(float(out.loss) * n)
-        n_tok += n
+        ctx = enc.input_ids[:, begin:end]
+        logits = model(ctx).logits                      # (1, L, V); logits[j] predicts token j+1
+        logp = torch.log_softmax(logits[:, :-1], dim=-1)  # (1, L-1, V)
+        tgt = enc.input_ids[0, begin + 1:end]           # predicted tokens
+        tgt_logp = logp[0].gather(-1, tgt.unsqueeze(-1)).squeeze(-1)  # (L-1,)
+        pos = torch.arange(begin + 1, end)
+        mask = pos >= max(1, end - trg_len)             # first window: all; later: new region only
+        sel_lp = tgt_logp[mask]
+        if sel_lp.numel() == 0:
+            prev_end = end
+            if end == seq_len:
+                break
+            continue
+        surprisals.extend((-sel_lp).tolist())
+        # rank of the actual token among the full vocabulary (1 = most likely);
+        # vectorized compare against the log-softmax row — no argsort needed
+        row = logp[0][mask]                              # (n, V)
+        ranks.extend(((row < sel_lp.unsqueeze(-1)).sum(-1) + 1).tolist())
         prev_end = end
         if end == seq_len:
             break
-    return math.exp(sum(nlls) / max(1, n_tok))
+    if not surprisals:
+        return None
+    sur = np.asarray(surprisals, dtype=np.float64)
+    rk = np.asarray(ranks, dtype=np.float64)
+    mean_surprisal = float(sur.mean())
+    perplexity = float(np.exp(mean_surprisal))
+    d2 = np.diff(np.diff(sur))
+    if d2.size >= 2:
+        hist, _ = np.histogram(d2, bins=20, density=True)
+        pd = hist[hist > 0]
+        pd = pd / pd.sum() if pd.size else pd
+        entropy2 = float(-(pd * np.log(pd)).sum()) if pd.size else 0.0
+    else:
+        entropy2 = 0.0
+    lrr = float(np.log(np.clip(rk, 1, None)).mean())
+    return {"perplexity": perplexity, "mean_surprisal": mean_surprisal,
+            "surprisal_entropy2": entropy2, "lrr": lrr}
+
+
+def perplexity(text: str):
+    """Backward-compatible wrapper: mean-NLL perplexity under GPT-2."""
+    r = gpt2_surprisal_features(text)
+    return None if r is None else r["perplexity"]
+
+
+_SENT_SPLIT = re.compile(r"(?<=[.!?])\s+")
+
+def burstiness_cv(text: str):
+    """Coefficient of variation of sentence lengths (burstiness). Primary
+    signal in commercial detectors; our calibration: pure AI 0.27-0.39,
+    passing 0.54-0.69."""
+    sents = [s for s in _SENT_SPLIT.split(text) if s.strip()]
+    lens = [len(s.split()) for s in sents]
+    if len(lens) < 2:
+        return 0.0
+    m = float(np.mean(lens))
+    return float(np.std(lens) / m) if m > 0 else 0.0
+
+
+def pattr(text: str, target: int = 400, alpha: float = 0.01):
+    """Penalty-adjusted type-token ratio (lexical diversity, length-corrected)."""
+    toks = re.findall(r"[a-z']+", text.lower())
+    n = len(toks)
+    if n == 0:
+        return 0.0
+    ttr = len(set(toks)) / n
+    denom = n + alpha * abs(n - target)
+    return float(ttr * (n / denom))
 
 
 def _windows(text: str, tok, limit: int = 512):
@@ -139,14 +222,43 @@ def p_ai_edit(text: str):
     return sum(p * wt for p, wt in zip(probs, weights[:len(probs)])) / max(1, total)
 
 
+def _cv_risk(cv: float) -> float:
+    """CV → risk, piecewise-linear between the calibrated anchors
+    (pure AI 0.275 → 0.98; passing 0.762 → 0.08); clamped outside."""
+    if cv <= 0.275:
+        return 0.98
+    if cv >= 0.762:
+        return 0.08
+    return 0.98 + (cv - 0.275) * (0.08 - 0.98) / (0.762 - 0.275)
+
+
 def score_text(text: str) -> dict:
-    out = {"perplexity": None, "p_ai_gen": None, "p_ai_edit": None}
-    for key, fn in (("perplexity", perplexity), ("p_ai_gen", p_ai_gen), ("p_ai_edit", p_ai_edit)):
+    out = {"perplexity": None, "p_ai_gen": None, "p_ai_edit": None,
+           "mean_surprisal": None, "surprisal_entropy2": None, "lrr": None,
+           "burstiness_cv": None, "pattr": None, "ai_risk_score": None}
+    for key, fn in (("gpt2_features", gpt2_surprisal_features), ("p_ai_gen", p_ai_gen), ("p_ai_edit", p_ai_edit)):
         try:
-            out[key] = fn(text)
+            r = fn(text)
+            if key == "gpt2_features":
+                if r:
+                    out["perplexity"] = r["perplexity"]
+                    out["mean_surprisal"] = r["mean_surprisal"]
+                    out["surprisal_entropy2"] = r["surprisal_entropy2"]
+                    out["lrr"] = r["lrr"]
+            else:
+                out[key] = r
         except Exception as e:
             print(f"detector_bridge: {key} failed: {type(e).__name__}: {e}", file=sys.stderr)
+    try:
+        out["burstiness_cv"] = burstiness_cv(text)
+        out["pattr"] = pattr(text)
+    except Exception as e:
+        print(f"detector_bridge: text features failed: {type(e).__name__}: {e}", file=sys.stderr)
     out["words"] = len(text.split())
+    # 8.14: provisional calibrated blend — CV-dominant per the 9-point mapping
+    # (0.55/0.45), recalculate as labelled points grow. gen/edit stay raw.
+    if out["burstiness_cv"] is not None and out["p_ai_gen"] is not None:
+        out["ai_risk_score"] = round(0.55 * _cv_risk(out["burstiness_cv"]) + 0.45 * out["p_ai_gen"], 4)
     return out
 
 
