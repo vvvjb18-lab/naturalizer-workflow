@@ -22,7 +22,7 @@ import {
   generateCandidate, candidateStats, rankCandidates,
   grammarScores, nliPairs, scoreFiles, closeDetector,
   detectDocType, surgicalRepair, assembleCrossover, shouldStopEarly,
-  mechanicalPolish, applyWordBudget, scoreTexts, citationConsistency, cloakNumbers, completeUnit,
+  mechanicalPolish, applyWordBudget, scoreTexts, citationConsistency, cloakNumbers, completeUnit, validateUnit,
   burstifyCandidate, cvOf,
 } from './candidates.mjs';
 import { grindParas, rescueContradictions, similarityPolish, styleGuard as styleGuardText } from './grind.mjs';
@@ -747,14 +747,28 @@ async function main() {
         if (pair && pair.contradict > 0.5) { repaired.paras[i] = preT2[i]; reverted.push(i); }
       }
       if (changed.length > reverted.length) {
-        chosen.paras = repaired.paras;
-        chosen.prose = targetIdx.map((i) => chosen.paras[i]).filter(Boolean).join('\n\n');
-        chosen.grammarDamage = await damageOf(chosen.prose);
-        const st3 = candidateStats({ originalProse, prose: chosen.prose, lang });
-        st3.coverage = chosen.stats.coverage;
-        chosen.stats = st3;
+        // 8.9: whole-text band check — tier-2 regens are fresh hz output and
+        // on extreme docs they carried the offline score 0.573 -> 0.849 (the
+        // real detector forgave it once; the instrument drift is not
+        // acceptable — same guard pattern as register surgery).
+        const t2Prose = targetIdx.map((i) => repaired.paras[i]).filter(Boolean).join('\n\n');
+        const [t2Score] = await scoreTexts([t2Prose]);
+        const t2Gen = t2Score?.p_ai_gen ?? null;
+        const preGenT2 = chosen.score?.p_ai_gen ?? null;
+        if (preGenT2 != null && t2Gen != null && t2Gen > preGenT2 + 0.05) {
+          console.log(`  ⚠ 二級手術推高整份 gen（${fmt(preGenT2)} → ${fmt(t2Gen)}）→ 全部回退`);
+          qFix = { threshold: q.threshold, surgeries: 0, revertedAll: true, preGen: preGenT2, postGen: t2Gen };
+        } else {
+          chosen.paras = repaired.paras;
+          chosen.prose = t2Prose;
+          chosen.grammarDamage = await damageOf(chosen.prose);
+          const st3 = candidateStats({ originalProse, prose: chosen.prose, lang });
+          st3.coverage = chosen.stats.coverage;
+          chosen.stats = st3;
+          if (t2Score) chosen.score = { ...chosen.score, ...t2Score };
+        }
       }
-      qFix = {
+      if (!qFix) qFix = {
         threshold: q.threshold, surgeries: repaired.surgeries.filter((s) => !reverted.includes(String(s.para))).length,
         list: repaired.surgeries.filter((s) => !reverted.includes(String(s.para))).map((s) => ({ before: s.before.slice(0, 60), after: s.after.slice(0, 60) })),
         reverted,
