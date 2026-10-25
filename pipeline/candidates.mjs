@@ -627,7 +627,7 @@ export async function burstifyCandidate({
           const [pair] = await nliPairs([[originalsByPara[t.i] || '', out]]);
           if (pair && pair.contradict > 0.5) { log(`    p${t.i} NLI reject`); continue; }
           const newCv = cvOf(out, lang);
-          if (newCv < Math.min(cvTarget, t.cv * 1.15)) { log(`    p${t.i} cv ${t.cv.toFixed(2)} → ${newCv.toFixed(2)}, no gain`); continue; }
+          if (newCv < Math.max(0.1, Math.min(cvTarget, t.cv * 1.15))) { log(`    p${t.i} cv ${t.cv.toFixed(2)} → ${newCv.toFixed(2)}, no gain`); continue; }
           paras[t.i] = out;
           moves.push({ para: t.i, cvBefore: Number(t.cv.toFixed(2)), cvAfter: Number(newCv.toFixed(2)) });
           log(`    p${t.i}: cv ${t.cv.toFixed(2)} → ${newCv.toFixed(2)} ✓`);

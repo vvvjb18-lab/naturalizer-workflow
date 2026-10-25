@@ -50,6 +50,7 @@ function styleGuard(before, cand, restSents, lang = 'en') {
   }
   return null;
 }
+export { styleGuard };
 
 async function sentenceModeRegen({ paras, idx, origParas, lang = 'en', maxSents = 5, log = () => {} }) {
   const backup = paras[idx];
@@ -193,12 +194,18 @@ export async function grindParas({
       }
     }
     stats.totalGain += roundGain;
-    // 8.7: convergence stop — two consecutive low-gain rounds mean the rest
+    // 8.7: convergence stop — consecutive low-gain rounds mean the rest
     // is stubborn register wall; more rounds burn runtime without results.
-    if (roundGain < 0.02) {
+    // 8.7.1: never before minRounds — sentence mode needs a few rounds to
+    // find its foothold on extreme docs (run84's gains started at round 3).
+    // 8.7.2: extreme docs keep grinding while ANY gain remains (mapping:
+    // 0.65 -> 8% vs 0.78 -> 41% — the cliff demands reaching <=0.65).
+    const weakBar = extreme ? 0.005 : 0.02;
+    const minRounds = extreme ? 10 : 2;
+    if (roundGain < weakBar) {
       stats.weakRounds++;
       log(`  round ${r}: total gain ${roundGain.toFixed(3)} (${stats.weakRounds}/2 weak)`);
-      if (stats.weakRounds >= 2) { log('  收斂：連續兩輪增益不足，停止研磨'); break; }
+      if (stats.weakRounds >= 2 && r >= minRounds) { log('  收斂：連續兩輪增益不足，停止研磨'); break; }
     } else stats.weakRounds = 0;
     if (!acceptedAny) {
       stats.dryRounds++;

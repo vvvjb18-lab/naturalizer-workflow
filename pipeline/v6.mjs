@@ -22,11 +22,11 @@ import {
   generateCandidate, candidateStats, rankCandidates,
   grammarScores, nliPairs, scoreFiles, closeDetector,
   detectDocType, surgicalRepair, assembleCrossover, shouldStopEarly,
-  mechanicalPolish, applyWordBudget, scoreTexts, citationConsistency,
+  mechanicalPolish, applyWordBudget, scoreTexts, citationConsistency, cloakNumbers, completeUnit,
   burstifyCandidate, cvOf,
 } from './candidates.mjs';
-import { grindParas, rescueContradictions, similarityPolish } from './grind.mjs';
-import { detectLang, splitSentences, wordCount } from '../polish/src/text.mjs';
+import { grindParas, rescueContradictions, similarityPolish, styleGuard as styleGuardText } from './grind.mjs';
+import { detectLang, splitSentences, wordCount, tokenSet, jaccard } from '../polish/src/text.mjs';
 import { factNumbers, citationsIn } from '../polish/src/checks.mjs';
 
 const HERE = import.meta.dirname;
@@ -172,7 +172,7 @@ async function main() {
       for (const i of targetKeys) {
         const t = plan.targets[i].units.map((u) => u.text).join(' ');
         const wc = wordCount(t, 'en');
-        const shortTitle = wc <= 9 && !/[.!?]["']?\s*$/.test(t.trim()) && !citationsIn(t).length;
+        const shortTitle = wc <= 14 && !/[.!?]["']?\s*$/.test(t.trim()) && !citationsIn(t).length;
         // 8.6: first paragraph = title + assignment prompt glued ("...which do
         // you think is more efficient?") — hz mangles it; deliver untouched.
         const headerPrompt = i === targetKeys[0] && wc <= 45 && t.includes('?') && !citationsIn(t).length;
@@ -227,7 +227,7 @@ async function main() {
     };
     let candidatesN = cfg.candidates;
     if (profile.extreme) {
-      candidatesN = Math.min(cfg.candidates, cfg.extremePath?.candidates ?? 3);
+      candidatesN = Math.min(cfg.candidates, cfg.extremePath?.candidates ?? 4);
       cfg.grind = { ...cfg.grind, roundsExtreme: cfg.extremePath?.rounds ?? 15 };
       console.log(`  文檔畫像：極端（原稿 gen ${fmt(profile.gen, 2)}）→ 極速路徑（${candidatesN} 候選、句級優先研磨 15 輪、收斂即停）`);
     } else if (profile.mid) {
@@ -803,6 +803,90 @@ async function main() {
         }
       }
     }
+
+    // 7.35 ── 8.8: register surgery (post-LT: scans the true final text) — second person, contractions and spoken
+    // fillers that CoLA passes but academic QA rejects (compare-stores QA:
+    // "you get to have face-to-face interaction"). The whole candidate is
+    // scanned, offending sentences are regenerated from their mapped ORIGINAL
+    // sentence (academic register instruction), every change behind
+    // styleGuard + per-sentence NLI; whole-text band check reverts on drift.
+    let regFix = null;
+    if (!docType.form && lang === 'en' && cfg.registerSurgery?.enabled !== false) {
+      const regRe = [
+        /\b(you|your)\b/i,
+        /\b(it's|they're|don't|can't|won't|isn't|you'll|we'll)\b/i,
+        /\b(in a nutshell|pretty much|a whole lot)\b/i,
+      ];
+      const offending = [];
+      for (const i of targetIdx) {
+        const sents = splitSentences(chosen.paras[i] || '', lang);
+        sents.forEach((s) => {
+          if (wordCount(s.text, lang) >= 8 && regRe.some((re) => re.test(s.text))) offending.push({ i, s });
+        });
+      }
+      const budget = cfg.registerSurgery?.maxSentences ?? 8;
+      const targets = offending.slice(0, budget);
+      if (targets.length) {
+        console.log(`=== 5.8/7 語域手術（${offending.length} 句冒犯語域，處理前 ${targets.length} 句）===`);
+        const preReg = { paras: { ...chosen.paras }, prose: chosen.prose, score: chosen.score, damage: chosen.grammarDamage, stats: chosen.stats };
+        let done = 0;
+        for (const t of [...targets].sort((a, b) => b.s.start - a.s.start)) {
+          const origSents = splitSentences(originalsByPara[t.i] || '', lang).map((s) => s.text);
+          let origSent = null, bestSim = 0;
+          for (const os of origSents) {
+            const sim = jaccard(tokenSet(t.s.text, lang), tokenSet(os, lang));
+            if (sim > bestSim) { bestSim = sim; origSent = os; }
+          }
+          let ok = false;
+          for (let attempt = 0; attempt < 2 && !ok; attempt++) {
+            try {
+              const { cloaked, restore } = cloakNumbers(origSent || t.s.text);
+              const cand = restore(await completeUnit({ text: cloaked, sampling: { temperature: 0.9, topP: 0.95 }, instruction: 'Rewrite this sentence in an academic register: no contractions, no second person, no rhetorical questions, no sentence fragments, no spoken fillers. Keep the original meaning and all facts exactly.' }));
+              const v = validateUnit(origSent || t.s.text, cand, lang);
+              if (!v.ok) { console.log(`  regen rejected (${v.reason})`); continue; }
+              const restSents = splitSentences(chosen.paras[t.i], lang).filter((x) => x.start !== t.s.start).map((x) => x.text);
+              const guard = styleGuardText(origSent || t.s.text, cand, restSents, lang);
+              if (guard) { console.log(`  regen rejected (${guard})`); continue; }
+              const candSents = splitSentences(cand, lang).map((s) => s.text);
+              const cgrams = await grammarScores(candSents);
+              if (cgrams.some((g) => g < 0.7)) { console.log('  regen ungrammatical'); continue; }
+              if (origSent) {
+                const [pair] = await nliPairs([[origSent, cand]]);
+                if (pair && pair.contradict > 0.5) { console.log('  regen NLI reject'); continue; }
+              }
+              chosen.paras[t.i] = chosen.paras[t.i].slice(0, t.s.start) + cand + chosen.paras[t.i].slice(t.s.end);
+              ok = true; done++;
+            } catch (e) {
+              console.log(`  regen failed: ${e.message.slice(0, 60)}`);
+            }
+          }
+        }
+        if (done) {
+          chosen.prose = targetIdx.map((i) => chosen.paras[i]).filter(Boolean).join('\n\n');
+          const stR = candidateStats({ originalProse, prose: chosen.prose, lang });
+          stR.coverage = chosen.stats.coverage;
+          const dmgR = await damageOf(chosen.prose);
+          const [scR] = await scoreTexts([chosen.prose]);
+          const bandLoR = (cfg.filters?.cvBand?.[0] ?? 0.45) * 0.9;
+          const bandOkR = (scR?.p_ai_gen ?? 1) <= Math.max(gc.genGate, (preReg.score?.p_ai_gen ?? 1) + 0.05)
+            && dmgR <= (cfg.filters?.maxGrammarDamage ?? 0.08)
+            && (stR.cv === 0 || stR.cv >= bandLoR);
+          if (bandOkR) {
+            chosen.stats = stR;
+            chosen.grammarDamage = dmgR;
+            if (scR) chosen.score = { ...chosen.score, ...scR };
+            regFix = { offending: offending.length, fixed: done };
+            console.log(`  語域手術：${done}/${targets.length} 句修正，gen ${fmt(chosen.score?.p_ai_gen)}`);
+          } else {
+            chosen.paras = preReg.paras; chosen.prose = preReg.prose; chosen.score = preReg.score;
+            chosen.grammarDamage = preReg.damage; chosen.stats = preReg.stats;
+            regFix = { offending: offending.length, fixed: 0, reverted: true };
+            console.log('  ⚠ 語域手術後出帶 → 全部回退');
+          }
+        } else regFix = { offending: offending.length, fixed: 0 };
+      } else regFix = { offending: 0, fixed: 0 };
+    }
+
 
     const aDocx = path.join(outDir, `${base}.v6-A.docx`);
     const aProse = path.join(outDir, `${base}.v6-A.prose.txt`);
