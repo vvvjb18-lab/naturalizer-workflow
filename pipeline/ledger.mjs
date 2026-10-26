@@ -81,6 +81,10 @@ export function createLedger(workDir, { docId = '' } = {}) {
     entryAt(id) {
       return entries[id] || null;
     },
+    /** 全部「第一/二環綠且可回退」的候選條目（含 meta.paras 與 risk）。 */
+    greenCandidates() {
+      return entries.filter((e) => e.stage === 'candidate' && e.verdict?.pass === true && e.meta?.paras && Object.keys(e.meta.paras).length);
+    },
     /** 最後一個「三環全綠且可回退」的版本（有段落映射或為 #0 原稿）；
      *  skeleton/reorg 等檢查類條目不攜帶段落映射，不作為回退點。 */
     rollbackPoint() {

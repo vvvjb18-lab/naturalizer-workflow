@@ -1,5 +1,7 @@
 # Naturalizer Workflow 9.0 藍圖 — 研究層 × 工程層整合版
 
+> **🎓 畢業考通過（2026-10-27）**：E2 arch90 全鏈交付 → **Turnitin AI 0%／查重 22%（族帶內）／0 integrity flags**（校準集第 22 點，碼 49C86925C8）。交付的是否決環回退鏈的產物：首選文本被攔→回退最佳綠候選。四個評估器誤報類在畢業考中被逐輪逼出並修復（全部有回歸測試）。**DoD 已滿足，9.0 完成。**
+>
 > **實作狀態（2026-10-27，第三輪——L0–L5 生產級完工）**
 > - 模組：`pipeline/ledger.mjs`（L4 帳本）、`verify_gates.mjs`（L3 三環否決）、`router.mjs`（L0 五狀態分診）、`diagnostics.mjs`（L1 診斷＋作者錨定）、`argument_map.mjs`（L2 骨架）、`grind.mjs repetitionReorg`（L2 重複論證重組）、`calib_merge.mjs`（L5 合併校準）
 > - 測試 66/66 綠（arch90 23 項）；煙霧：S1／S2／S3（txt＋**docx**）全過，預設路徑零改動

@@ -73,6 +73,7 @@ const HELP = `v6.mjs — Workflow 8.0（選擇式管線：早停 × 手術 × �
   --mcts-unit U        paragraph（預設）｜sentence（對齊 8.4 句級研磨）
   --zmq                8.17 啟用 ZMQ ROUTER/DEALER 異步評分橋
   --arch90             9.0 分層架構：L0 五狀態路由＋L3 三環否決＋L4 版本帳本＋L1 診斷＋L2 骨架檢查
+  --time-budget MIN    9.0 週轉保護：超過 N 分鐘即跳過研磨/查重打磨（增益層），交付最佳已驗證候選
   --shred              8.18 前置粉碎：先用 shredder.py 打散句法（事實守衛）
   --shred-rate R       粉碎觸發率（預設 0.5）
 `;
@@ -137,6 +138,7 @@ async function main() {
   const mctsMode = !!args.k.mcts;
   const useShred = !!args.k.shred;
   const arch90 = !!args.k.arch90;
+  const timeBudgetMin = args.k['time-budget'] ? Number(args.k['time-budget']) : (arch90 ? 15 : 0); // 9.0: turnaround protection, arch90 default 15min
   const useZmq = !!args.k.zmq;
   const useCrossover = cfg.crossover !== false;
   const useAdaptive = cfg.adaptive !== false;
@@ -648,8 +650,8 @@ async function main() {
       // 在 NLI 守門之前過濾；第三環品質維度只記錄不否決。
       if (arch90 && eligible.length) {
         for (const c of eligible) {
-          c.archVerdict = evaluateText({ draft: originalProse, prose: c.prose, lang, nli: null, cvDraft: archOrigCv, cvProse: c.stats?.cv });
-          ledger.append({ stage: 'candidate', label: `cand${c.id}`, before: originalProse, after: c.prose, checks: { score: c.score, stats: c.stats }, verdict: c.archVerdict, meta: { paras: c.paras } });
+          c.archVerdict = evaluateText({ draft: originalProse, prose: c.prose, lang, nli: null, cvDraft: archOrigCv, cvProse: c.stats?.cv, paragraphs: plan.paragraphs });
+          ledger.append({ stage: 'candidate', label: `cand${c.id}`, before: originalProse, after: c.prose, checks: { score: c.score, stats: c.stats }, verdict: c.archVerdict, meta: { paras: c.paras, risk: c.risk ?? null } });
         }
         const vetoFree = eligible.filter((c) => c.archVerdict.pass);
         if (vetoFree.length < eligible.length) console.log(`  9.0 否決制：${eligible.length - vetoFree.length} 個候選被第一/二環否決（${eligible.filter((c) => !c.archVerdict.pass).map((c) => `cand${c.id}:${c.archVerdict.vetoes[0].rule}`).join('、')}）`);
@@ -680,7 +682,20 @@ async function main() {
           score: scored[0],
         };
         fs.writeFileSync(assembled.prosePath, prose + '\n', 'utf8');
-        pool = [...candidates, assembled];
+        // 9.0: the X must pass the same ring-1/2 as candidates — a structurally
+        // polluted crossover is dropped here instead of at delivery time.
+        if (arch90) {
+          const xv = evaluateText({ draft: originalProse, prose, lang, cvDraft: archOrigCv, cvProse: stats?.cv, paragraphs: plan.paragraphs });
+          if (!xv.pass) {
+            console.log(`  ⚠ 9.0：重組 X 未過否決環（${xv.vetoes.map((v) => v.rule).join('、')}）——本次不採用 X`);
+            pool = [...candidates];
+            assembled = null;
+          } else {
+            pool = [...candidates, assembled];
+          }
+        } else {
+          pool = [...candidates, assembled];
+        }
         const froms = Object.values(xo.provenance).join(',');
         console.log(`  重組 X：逐段取自 cand{${froms}} · CV=${fmt(stats.cv, 3)} damage=${fmt(assembled.grammarDamage)}`);
       } else {
@@ -820,10 +835,19 @@ async function main() {
     // paragraphs (delete is not an option here — the prose must stay whole),
     // then accept only if the whole-text score improved AND the grammar
     // damage stayed inside the delivery band; otherwise revert to pre-grind.
+    // 9.0 turnaround: grind & similarity polish are GAIN stages, not
+    // correctness stages — a wall-clock budget cuts them, delivering the best
+    // verified candidate. Veto-carrying chosen candidates skip grind too
+    // (delivery will reject them regardless; grinding a doomed draft wastes
+    // 20+ minutes — 2026-10-27 graduation-run lesson).
+    const overdue = arch90 && timeBudgetMin > 0 && (Date.now() - T0) > timeBudgetMin * 60000;
+    const doomedChosen = arch90 && chosen.archVerdict && !chosen.archVerdict.pass;
+    if (overdue) console.log(`  ⚠ 9.0 週轉保護：已超 ${timeBudgetMin} 分鐘——跳過研磨/查重打磨，交付最佳已驗證候選`);
+    if (doomedChosen) console.log('  ⚠ 9.0：選中候選帶否決票（NLI 最後手段）——跳過研磨，交付階段將回退綠點');
     let grindInfo = null;
-    if (docType.form || (arch90 && chosen.archFrozen)) {
-      console.log(docType.form ? '=== 5.5/7 段級研磨：form 模式跳過（V2 配方不動 A）===' : '=== 5.5/7 段級研磨：9.0 凍結（最後綠點交付，不做模型重寫）===');
-      grindInfo = docType.form ? { action: 'skipped', reason: 'form mode (V2 recipe)' } : { action: 'skipped', reason: 'arch90 frozen last-green delivery' };
+    if (docType.form || (arch90 && (chosen.archFrozen || overdue || doomedChosen))) {
+      console.log('=== 5.5/7 段級研磨：跳過（' + (docType.form ? 'form 模式' : overdue ? '時間預算' : doomedChosen ? '帶否決票' : '凍結交付') + '）===');
+      grindInfo = docType.form ? { action: 'skipped', reason: 'form mode (V2 recipe)' } : { action: 'skipped', reason: (arch90 && chosen.archFrozen) ? 'arch90 frozen last-green delivery' : overdue ? 'time budget' : doomedChosen ? 'veto-carrying chosen' : 'arch90' };
     } else if (mctsMode) {
       console.log('=== 5.5/7 段級研磨：--mcts 模式跳過（搜索已內含評估）===');
       grindInfo = { action: 'skipped', reason: 'mcts mode' };
@@ -934,7 +958,7 @@ async function main() {
     // Whole-text acceptance: stay inside the delivery band, else revert.
     let simInfo = null;
     const sp = { enabled: cfg.similarityPolish?.enabled !== false, worst: cfg.similarityPolish?.worst ?? 3 };
-    if (docType.form || !sp.enabled || lang !== 'en' || (arch90 && chosen.archFrozen)) {
+    if (docType.form || !sp.enabled || lang !== 'en' || (arch90 && (chosen.archFrozen || overdue || doomedChosen))) {
       simInfo = { action: 'skipped', reason: docType.form ? 'form mode' : (!sp.enabled ? 'disabled' : (arch90 && chosen.archFrozen) ? 'arch90 frozen' : 'lang') };
     } else {
       console.log(`=== 5.6/7 查重打磨（重生最 stock 的 ${sp.worst} 句，帶內驗收）===`);
@@ -1205,7 +1229,7 @@ async function main() {
 
 
     // 9.0 arch90 — 交付前最終否決（L3）＋骨架存活檢查（L2）＋回退（L4）
-    let archFinal = null, archRolledBack = false, archSkeleton = null, archReorg = null;
+    let archFinal = null, archRolledBack = false, archKeptFailing = false, archSkeleton = null, archReorg = null;
     if (arch90) {
       // L2: S3 路由——重複論證重組（先於最終否決，讓否決環覆蓋重組後文本）
       if (route?.state === 'S3') {
@@ -1222,7 +1246,7 @@ async function main() {
             const [scR] = await scoreTexts([chosen.prose]);
             if (scR) chosen.score = { ...(chosen.score || {}), ...scR };
             // 重組文本也要過第一環（事實基準），不過即整體回退
-            const reorgV = evaluateText({ draft: originalProse, prose: chosen.prose, lang, cvDraft: archOrigCv, cvProse: chosen.stats?.cv });
+            const reorgV = evaluateText({ draft: originalProse, prose: chosen.prose, lang, cvDraft: archOrigCv, cvProse: chosen.stats?.cv, paragraphs: plan.paragraphs });
             if (!reorgV.pass) {
               console.log(`  ⚠ 9.0 重組未過否決環（${reorgV.vetoes.map((v) => v.rule).join('、')}）→ 回退重組`);
               chosen.paras = beforeParas; chosen.prose = beforeProse; chosen.score = beforeScore; chosen.stats = beforeStats;
@@ -1234,29 +1258,32 @@ async function main() {
         const reorgClean = !(archReorg?.vetoes?.length);
         ledger.append({ stage: 'reorg', before: beforeProse, after: chosen.prose, verdict: reorgClean ? { pass: true, vetoes: [], dimensions: {} } : { pass: false, vetoes: archReorg.vetoes, dimensions: {} }, meta: { ...archReorg, paras: { ...chosen.paras } } });
       }
-      archFinal = evaluateText({ draft: originalProse, prose: chosen.prose, lang, nli: chosen.nli || null, cvDraft: archOrigCv, cvProse: chosen.stats?.cv });
+      archFinal = evaluateText({ draft: originalProse, prose: chosen.prose, lang, nli: chosen.nli || null, cvDraft: archOrigCv, cvProse: chosen.stats?.cv, paragraphs: plan.paragraphs });
       ledger.append({ stage: 'delivery', before: originalProse, after: chosen.prose, verdict: archFinal, meta: { chosen: chosen.crossover ? 'X' : chosen.id, route: route?.state } });
       if (!archFinal.pass) {
-        const rp = ledger.rollbackPoint();
-        const green = ledger.entryAt(rp);
-        if (rp === 0) {
-          console.log(`  ⚠ 9.0 交付否決（${archFinal.vetoes.map((v) => v.rule).join('、')}）→ 回退至原稿（帳本點 #0）`);
+        const greens = ledger.greenCandidates();
+        const green = greens.length ? greens.reduce((a, b) => ((b.meta?.risk ?? 9) < (a.meta?.risk ?? 9) ? b : a)) : null;
+        if (!green) {
+          console.log(`  ⚠ 9.0 交付否決（${archFinal.vetoes.map((v) => v.rule).join('、')}）→ 回退至原稿（帳本 #0）`);
           chosen.paras = {};
           for (const i of targetIdx) chosen.paras[i] = originalsByPara[i];
           chosen.prose = originalProse;
           chosen.stats = candidateStats({ originalProse, prose: originalProse, lang });
           archRolledBack = true;
         } else if (green?.meta?.paras && Object.keys(green.meta.paras).length) {
-          console.log(`  ⚠ 9.0 交付否決（${archFinal.vetoes.map((v) => v.rule).join('、')}）→ 回退至帳本點 #${rp}（${green.stage} ${green.label || ''}）`);
+          console.log(`  ⚠ 9.0 交付否決（${archFinal.vetoes.map((v) => v.rule).join('、')}）→ 回退至最佳綠候選（${green.label || green.stage}，risk ${green.meta?.risk ?? '—'}）`);
           chosen.paras = { ...green.meta.paras };
           chosen.prose = green.after;
           const stG = candidateStats({ originalProse, prose: chosen.prose, lang });
           stG.coverage = chosen.stats?.coverage ?? 1;
           chosen.stats = stG;
+          chosen.crossover = false;
+          chosen.id = (green.label || '').replace(/^cand/, '') || chosen.id;
           archRolledBack = true;
         } else {
           console.log(`  ⚠ 9.0 交付否決（${archFinal.vetoes.map((v) => v.rule).join('、')}）——綠點無段落映射，保留現版並標記人工覆核（exit 2）`);
           archRolledBack = true;
+          archKeptFailing = true;
         }
       }
       const skBefore = buildArgumentMap(originalProse, lang);
@@ -1455,8 +1482,12 @@ ${formCheck ? `\n## form 檢查\n\n引用 ${formCheck.citations} 個 / 數字 ${
     }
     console.log(`總耗時：${Math.round((Date.now() - T0) / 1000)}s（畫像 ${Math.round((profile.elapsedMs || 0) / 1000)}s）`);
     if (arch90 && archFinal && !archFinal.pass) {
-      console.log('9.0：交付未過三環否決（已回退或標記人工覆核）——exit 2');
-      process.exitCode = 2;
+      if (archKeptFailing) {
+        console.log('9.0：交付未過三環否決且無綠點可回退（人工覆核）——exit 2');
+        process.exitCode = 2;
+      } else {
+        console.log('9.0：交付否決已回退至最後綠點——exit 0（風險卡記錄否決與回退）');
+      }
     }
   } finally {
     await closeDetector().catch(() => {});

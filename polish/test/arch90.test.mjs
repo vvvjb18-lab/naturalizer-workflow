@@ -250,3 +250,41 @@ test('diagnostics authorDrift flags style distance from author sample', () => {
   const d2 = diagnoseText(draft, 'en');
   assert.ok(!d2.issues.some((x) => x.id === 'authorDrift'));
 });
+
+// ── 9.0 畢業考修復：量詞 one 對稱／分數詞等價／引用年份對齊 ─────────────────
+
+test('one penny -> 1 penny is a legal conversion, not an invented fact', () => {
+  const draft = 'A one penny per ounce tax reduced purchases across two cities. The evidence was clear.';
+  const prose = 'A 1 penny per ounce tax reduced purchases across two cities. The evidence was clear.';
+  const v = evaluateText({ draft, prose, lang: 'en' });
+  assert.ok(!v.vetoes.some((x) => x.rule === 'inventedNumbers'), JSON.stringify(v.vetoes));
+});
+
+test('over half -> over 50% is a legal paraphrase', () => {
+  const draft = 'Manufacturers reformulated over half of their products to reduce sugar content in response.';
+  const prose = 'Manufacturers reformulated over 50% of their products to reduce sugar content in response.';
+  const v = evaluateText({ draft, prose, lang: 'en' });
+  assert.ok(!v.vetoes.some((x) => x.rule === 'inventedNumbers'), JSON.stringify(v.vetoes));
+});
+
+test('citation year alignment (8.2 authority) is not a citation mismatch', () => {
+  const draft = 'Purchases fell after the tax (Colchero, 2016). The effect persisted over time.';
+  const prose = 'Purchases fell after the tax (Colchero, 2017). The effect persisted over time.';
+  const paragraphs = ['Purchases fell after the tax (Colchero, 2016).', 'References', 'Colchero, A. (2017). Beverage purchases. Health Affairs, 36(3).'];
+  const v = evaluateText({ draft, prose, lang: 'en', paragraphs });
+  assert.ok(!v.vetoes.some((x) => x.rule === 'missingCitations' || x.rule === 'inventedCitations'), JSON.stringify(v.vetoes));
+});
+
+test('twenty-first century -> 21st century is a legal ordinal conversion', () => {
+  const draft = 'Obesity has become one of the most serious public health problems of the twenty-first century worldwide.';
+  const prose = 'Obesity is among the most serious public health problems of the 21st century worldwide today.';
+  const v = evaluateText({ draft, prose, lang: 'en' });
+  assert.ok(!v.vetoes.some((x) => x.rule === 'inventedNumbers'), JSON.stringify(v.vetoes));
+});
+
+test('duplicate citation across paragraphs is not fabrication (set semantics)', () => {
+  const draft = 'Sales fell after the tax (Bandy et al., 2020). Reformulation was the main driver.';
+  const prose = 'Sales fell after the tax (Bandy et al., 2020). Industry data from Bandy et al., 2020 confirms reformulation.';
+  const v = evaluateText({ draft, prose, lang: 'en' });
+  assert.ok(!v.vetoes.some((x) => x.rule === 'inventedCitations'), JSON.stringify(v.vetoes));
+});

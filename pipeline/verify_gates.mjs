@@ -7,27 +7,44 @@ import {
   duplicateSentences, truncation, colloquialHits, registerHits, aiPhraseHits,
 } from '../polish/src/checks.mjs';
 import { splitSentences, wordCount, tokenSet } from '../polish/src/text.mjs';
+import { citationConsistency } from './candidates.mjs';
 
 const HEDGE_RE = /\b(?:may|might|could|appears?|seems?|suggests?|possibly|perhaps|approximate(?:ly)?|roughly|tend(?:s)? to|likely|unlikely)\b/gi;
 export const hedgeCount = (text) => (text.match(HEDGE_RE) || []).length;
 
 const multisetDiff = (a, b) => {
-  // a 有 b 沒有（丟失）；b 有 a 沒有（新增）
-  const mb = new Map();
-  for (const x of b) mb.set(x, (mb.get(x) || 0) + 1);
-  const lost = [], invented = [];
-  const ma = new Map();
-  for (const x of a) ma.set(x, (ma.get(x) || 0) + 1);
-  for (const [x, n] of ma) if ((mb.get(x) || 0) < n) lost.push(x);
-  for (const [x, n] of mb) if ((ma.get(x) || 0) < n) invented.push(x);
-  return { lost, invented };
+  // 集合語義（9.0 畢業考裁決）：「發明」= 原稿任何位置都沒有的值；
+  // 同一值出現兩次不是捏造（學術上引用同一文獻多次、強調同一數據皆正常）。
+  const mb = new Set(b);
+  const ma = new Set(a);
+  return {
+    lost: [...ma].filter((x) => !mb.has(x)),
+    invented: [...mb].filter((x) => !ma.has(x)),
+  };
 };
 
-// 代名詞 "one" 會被 factNumbers 的詞數字映射成 1（"one of the great things"），
-// 在比較前洗掉；量詞用法（one percent / one hundred）保留。
-const PRONOUN_ONE = /\b(?<!no\s+)one\b(?!\s*(?:hundred|thousand|million|billion|percent|%))/gi;
-const scrubPronounOne = (t) => t.replace(PRONOUN_ONE, ' ');
+// 事實比較前的雙側正規化（兩邊套同一规则，保持對稱）：
+// - 代名詞 "one" 會被 factNumbers 的詞數字映射成 1（"one of the great things"）
+//   → 洗掉；量詞用法保留，連字號複合詞（one-penny-per-ounce）也算量詞。
+// - 分數詞等價：half↔50%、a quarter↔25%、three quarters↔75%（hz 合法改寫）。
+const PRONOUN_ONE = /\b(?<!no\s+)one\b(?!(?:[-\s]*(?:hundred|thousand|million|billion|percent|%|penny|pence|dollar|dollars|pound|pounds|euro|euros|cent|cents)))/gi;
+const TENS = { twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
+const UNITS = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7, eighth: 8, ninth: 9 };
+export const normalizeFacts = (t) => t
+  .replace(/\b(?:no\s+)?one of\b/gi, ' of')
+  .replace(/\bno one\b/gi, 'nobody')
+  .replace(/\bover half\b/gi, 'over 50%')
+  .replace(/\bhalf\b/gi, '50%')
+  .replace(/\ba quarter\b/gi, '25%')
+  .replace(/\bthree quarters\b/gi, '75%')
+  // 序數詞等價（7.4 cloak 教訓的評估器側）：twenty-first ↔ 21st
+  .replace(/\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)-(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth)\b/gi,
+    (m, tens, unit) => String(TENS[tens.toLowerCase()] + UNITS[unit.toLowerCase()]))
+  .replace(/\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(ieth)?\b/gi,
+    (m, tens) => (m.toLowerCase().endsWith('ieth') ? String(TENS[tens.toLowerCase()]) : m))
+  .replace(PRONOUN_ONE, ' ');
 export { scrubPronounOne };
+function scrubPronounOne(t) { return normalizeFacts(t); }
 
 function containmentRatio(prose, draft, lang) {
   const ds = splitSentences(draft, lang).map((s) => tokenSet(s.text, lang));
@@ -55,15 +72,24 @@ const acronyms = (text) => new Set((text.match(/\b[A-Z]{2,6}\b/g) || []).filter(
  * 對一份「改寫後全文」做三環評估。draft = 原稿全文（事實基準），prose = 候選全文。
  * nli: { maxContradict, meanEntail } | null（呼叫端已有 NLI 時傳入，省一次模型）。
  */
-export function evaluateText({ draft, prose, lang = 'en', nli = null, cvDraft = null, cvProse = null }) {
+export function evaluateText({ draft, prose, lang = 'en', nli = null, cvDraft = null, cvProse = null, paragraphs = null }) {
   const vetoes = [];
 
   // ── 第一環：內容正確性（一票否決）───────────────────────────────
-  const nums = multisetDiff(factNumbers(scrubPronounOne(draft)), factNumbers(scrubPronounOne(prose)));
+  const nums = multisetDiff(factNumbers(normalizeFacts(draft)), factNumbers(normalizeFacts(prose)));
   if (nums.lost.length) vetoes.push({ ring: 1, rule: 'missingNumbers', detail: `原稿事實數字丟失：${nums.lost.slice(0, 6).join(' ')}` });
   if (nums.invented.length) vetoes.push({ ring: 1, rule: 'inventedNumbers', detail: `出現原稿沒有的數字：${nums.invented.slice(0, 6).join(' ')}` });
 
-  const cits = multisetDiff(citationsIn(draft), citationsIn(prose));
+  // 引用年份對齊（8.2 規則）：內文年份以 References 為權威——兩側各自對齊後
+  // 再比較，否則 8.2 的合法對齊（2016→2017）會被誤判為引用丟失/發明。
+  let draftC = draft, proseC = prose;
+  if (paragraphs && lang === 'en') {
+    try {
+      draftC = citationConsistency({ paragraphs, prose: draft, fix: true }).prose;
+      proseC = citationConsistency({ paragraphs, prose, fix: true }).prose;
+    } catch { /* 對齊失敗退回原始比較 */ }
+  }
+  const cits = multisetDiff(citationsIn(draftC), citationsIn(proseC));
   if (cits.lost.length) vetoes.push({ ring: 1, rule: 'missingCitations', detail: `引用丟失：${cits.lost.slice(0, 3).join(' | ')}` });
   if (cits.invented.length) vetoes.push({ ring: 1, rule: 'inventedCitations', detail: `出現原稿沒有的引用：${cits.invented.slice(0, 3).join(' | ')}` });
 
