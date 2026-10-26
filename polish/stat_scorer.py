@@ -94,7 +94,9 @@ def _gpt2_light(text):
 
 def score(text, full=False, w1=W1, w2=W2, light=False):
     """Return the reward payload for one candidate text."""
-    feats = (_gpt2_light(text) if light else DB.gpt2_surprisal_features(text)) or {}
+    # 8.17.1: LRR measured at ~0 ms marginal cost (the forward pass dominates),
+    # so light mode keeps the full feature set; only EditLens/tmr are skipped.
+    feats = DB.gpt2_surprisal_features(text) or {}
     cv = DB.burstiness_cv(text)
     pattr = DB.pattr(text)
     ent2 = feats.get("surprisal_entropy2")

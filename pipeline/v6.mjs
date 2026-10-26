@@ -65,6 +65,7 @@ const HELP = `v6.mjs — Workflow 8.0（選擇式管線：早停 × 手術 × �
   --mcts-iterations N  MCTS 迭代數（預設 20，報告建議上限 50）
   --mcts-k N           每次擴展的分支數（預設 3）
   --mcts-generator G   app（12B，預設）｜stub（無 LLM，測試用）
+  --mcts-unit U        paragraph（預設）｜sentence（對齊 8.4 句級研磨）
   --zmq                8.17 啟用 ZMQ ROUTER/DEALER 異步評分橋
 `;
 
@@ -309,6 +310,8 @@ async function main() {
       const argv = [path.join(HERE, 'mcts_searcher.py'), '--plan', planPath, '--out', mctsOut,
         '--iterations', String(iterations), '--generator', String(args.k['mcts-generator'] || 'app')];
       if (useZmq) argv.push('--zmq');
+      const unit = String(args.k['mcts-unit'] || 'paragraph');
+      argv.push('--unit', unit);
       console.log(`=== 8.17 MCTS 搜索（${iterations} 迭代，k=${args.k['mcts-k'] || 3}，generator=${args.k['mcts-generator'] || 'app'}${useZmq ? '，ZMQ' : ''}）===`);
       const code = await new Promise((resolve) => {
         const child = spawn(process.execPath === '' ? 'python' : 'python', argv, { cwd: HERE, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -335,7 +338,7 @@ async function main() {
         mcts: { iterations: res.iterations, visited: res.visited, elapsed_s: res.elapsed_s,
                 reward: res.score?.reward, root_reward: res.root_score?.reward,
                 median_iter_ms: res.per_iter_ms ? res.per_iter_ms.slice().sort((a, b) => a - b)[Math.floor(res.per_iter_ms.length / 2)] : null,
-                generator: res.generator, rejected: res.tree?.rejected },
+                generator: res.generator, unit: res.unit, rejected: res.tree?.rejected },
       };
       console.log(`  MCTS 完成：reward ${fmt(res.root_score?.reward)} → ${fmt(res.score?.reward)} · `
         + `gen ${fmt(sc?.p_ai_gen)} · CV ${fmt(stats.cv)} · ${res.elapsed_s}s（${node.mcts.median_iter_ms} ms/iter 中位）`);

@@ -39,6 +39,7 @@ import stat_scorer                            # noqa: E402
 import shredder                               # noqa: E402  (stub generator only)
 
 APP_URL = os.environ.get("HZ_APP_URL", "http://127.0.0.1:47615")
+SENT_SPLIT = re.compile(r"(?<=[.!?])\s+")
 NUM = re.compile(r"\d+(?:[.,]\d+)*%?")
 CITE = re.compile(r"\([^()]{0,120}?\b(?:19|20)\d{2}[a-z]?[^()]*\)")
 
@@ -48,13 +49,23 @@ def _facts(t):
 
 
 # ── generators ─────────────────────────────────────────────────────────────
+SENT_INSTR = ("Rewrite this single sentence with a different structure and rhythm. "
+              "Keep the formal academic register exactly as polished as the original, "
+              "keep the exact meaning, and keep every fact, number and citation unchanged. "
+              "Vary sentence length: a much shorter or much longer sentence is welcome. "
+              "No contractions, no second person, no fillers.")
+
+
 class AppGenerator:
     """Real 12B generation through the Humanizer App (method unchanged)."""
 
-    def __init__(self, temperatures=(0.95, 1.05, 1.0)):
+    def __init__(self, temperatures=(0.95, 1.05, 1.0), unit="paragraph"):
         self.temps = temperatures
+        self.unit = unit
 
     def __call__(self, prompt, k=3):
+        if self.unit == "sentence":
+            prompt = SENT_INSTR + (chr(10) * 2) + prompt
         out = []
         for i in range(k):
             body = json.dumps({
@@ -80,7 +91,49 @@ class StubGenerator:
       merge two adjacent short sentences with a semicolon.
     """
 
+    def __init__(self, unit="paragraph"):
+        self.unit = unit
+
+    def _sentence_variants(self, sent, k=3):
+        """Grammar-safe structural variants: split a relative/contrast clause
+        into its own sentence, or move a fronted single-word adverb."""
+        base = " ".join(sent.split())
+        out = []
+        low = base.lower()
+        # ", which X." -> ". This X." (relative clause promoted)
+        if ", which " in low:
+            i = low.index(", which ")
+            head = base[:i].rstrip(", ")
+            tail = base[i + len(", which "):]
+            if len(head.split()) >= 6 and len(tail.split()) >= 4:
+                out.append(head + ". This " + tail)
+        # ", but X." -> ". However, X."
+        if ", but " in low:
+            i = low.index(", but ")
+            head = base[:i].rstrip(", ")
+            tail = base[i + len(", but "):]
+            if len(head.split()) >= 6 and len(tail.split()) >= 4:
+                out.append(head + ". However, " + tail[0].lower() + tail[1:])
+        # ", and X." -> ". In addition, X."
+        if ", and " in low:
+            i = low.index(", and ")
+            head = base[:i].rstrip(", ")
+            tail = base[i + len(", and "):]
+            if len(head.split()) >= 6 and len(tail.split()) >= 4:
+                out.append(head + ". In addition, " + tail[0].lower() + tail[1:])
+        # fronted single-word adverb -> parenthetical after the subject
+        m = re.match(r"^([A-Z][a-z]+),\s+(.+)$", base)
+        if m and m.group(1).lower() not in ("this", "these", "that", "those", "the", "however"):
+            body = m.group(2)
+            out.append(body[0].upper() + body[1:] + ", " + m.group(1).lower() + ".")
+        elif m:
+            body = m.group(2)
+            out.append(body[0].upper() + body[1:] + ", " + m.group(1).lower() + ".")
+        return [v for v in out if v and v != base][:k]
+
     def __call__(self, prompt, k=3):
+        if self.unit == "sentence":
+            return self._sentence_variants(prompt, k)
         base = " ".join(prompt.split())
         sents = [s.strip() for s in re.split(r"(?<=[.!?])\s+", base) if s.strip()]
         out = []
@@ -140,7 +193,7 @@ class Node:
 
 class MCTS:
     def __init__(self, paragraphs, originals, generator, k=3, iterations=50,
-                 c=1.2, w1=0.6, w2=0.4, log=print, scorer=None, lang="en"):
+                 c=1.2, w1=0.6, w2=0.4, log=print, scorer=None, lang="en", unit="paragraph"):
         self.paragraphs = list(paragraphs)
         self.originals = list(originals)
         self.gen = generator
@@ -150,6 +203,9 @@ class MCTS:
         self.w1, self.w2 = w1, w2
         self.log = log
         self.lang = lang
+        self.unit = unit
+        self.sent_visits = {}
+        self.sent_attempts = {}
         self._memo = {}
 
         def _scored(t):
@@ -188,6 +244,8 @@ class MCTS:
         return best_i
 
     def _expand(self, node):
+        if self.unit == "sentence":
+            return self._expand_sentence(node)
         idx = self._worst_paragraph(node)
         orig = self.originals[idx] if idx < len(self.originals) else self.paragraphs[idx]
         variants = self.gen(self.paragraphs[idx], self.k)
@@ -264,6 +322,64 @@ class MCTS:
             "history": self.history,
         }
 
+    # ── 8.17.1: sentence-level expansion (aligned with grind's sentenceModeRegen)
+    def _sentences(self, para):
+        return [s.strip() for s in SENT_SPLIT.split(para) if s.strip()]
+
+    def _target_sentence(self, node):
+        """Least-visited sentence, longest first on ties. No extra scoring."""
+        best = None
+        for pi, para in enumerate(node.paras):
+            for si, s in enumerate(self._sentences(para)):
+                key = (pi, si)
+                cand = (self.sent_visits.get(key, 0) + self.sent_attempts.get(key, 0), -len(s.split()), pi, si, s)
+                if best is None or cand < best:
+                    best = cand
+        if best is None:
+            return None
+        return best[2], best[3], best[4]
+
+    def _expand_sentence(self, node):
+        tgt = self._target_sentence(node)
+        if tgt is None:
+            return []
+        pi, si, orig = tgt
+        self.sent_attempts[(pi, si)] = self.sent_attempts.get((pi, si), 0) + 1
+        variants = self.gen(orig, self.k)
+        made = 0
+        for v in variants:
+            v = " ".join(v.split())
+            if not v or v == orig:
+                continue
+            if not _facts(orig) <= _facts(v):
+                node.rejected += 1
+                continue
+            try:
+                pair = DB.nli_list([[orig, v]])[0]
+                if (pair.get("contradict") or 0) > 0.5:
+                    node.rejected += 1
+                    continue
+                g = DB.gram_list([v])[0]["p_gram"]
+                if g < 0.6:
+                    node.rejected += 1
+                    continue
+            except Exception:
+                pass
+            sents = self._sentences(node.paras[pi])
+            if si >= len(sents):
+                continue
+            sents[si] = v
+            paras = list(node.paras)
+            paras[pi] = " ".join(sents)
+            sc = self.scorer((chr(10) * 2).join(paras))
+            child = Node(paras, parent=node, move=(pi, si, v), score=sc)
+            node.children.append(child)
+            key = (pi, si)
+            self.sent_visits[key] = self.sent_visits.get(key, 0) + 1
+            made += 1
+        return node.children if made else []
+
+
 
 def _zmq_scorer(port):
     """Scoring via the ROUTER/DEALER bridge (CPU evaluator decoupled from the
@@ -300,6 +416,7 @@ def main():
     ap.add_argument("--w1", type=float, default=0.6)
     ap.add_argument("--w2", type=float, default=0.4)
     ap.add_argument("--generator", choices=["app", "stub"], default="app")
+    ap.add_argument("--unit", choices=["paragraph", "sentence"], default="paragraph")
     ap.add_argument("--zmq", action="store_true")
     ap.add_argument("--port", type=int, default=5560)
     ap.add_argument("--test", action="store_true")
@@ -320,12 +437,13 @@ def main():
         scorer, cleanup = (None, None)
         if a.zmq:
             scorer, cleanup = _zmq_scorer(a.port)
-        res = MCTS(paras, paras, StubGenerator(), k=a.k,
+        res = MCTS(paras, paras, StubGenerator(unit=a.unit), k=a.k, unit=a.unit,
                    iterations=min(a.iterations, 10) if a.iterations == 50 else a.iterations,
                    c=a.c, w1=a.w1, w2=a.w2, log=log, scorer=scorer).run()
         if cleanup:
             cleanup()
         res["generator"] = "stub"
+        res["unit"] = a.unit
         print(json.dumps({k: res[k] for k in ("iterations", "elapsed_s", "visited", "tree", "score", "root_score")},
                          ensure_ascii=False, indent=1))
         per = res["per_iter_ms"]
@@ -337,15 +455,17 @@ def main():
     if not a.plan:
         ap.error("--plan or --test required")
     idx, paras = _load_plan(a.plan)
-    gen = StubGenerator() if a.generator == "stub" else AppGenerator()
+    gen = (StubGenerator(unit=a.unit) if a.generator == "stub"
+           else AppGenerator(unit=a.unit))
     scorer, cleanup = (None, None)
     if a.zmq:
         scorer, cleanup = _zmq_scorer(a.port)
-    res = MCTS(paras, paras, gen, k=a.k, iterations=a.iterations, c=a.c,
+    res = MCTS(paras, paras, gen, k=a.k, iterations=a.iterations, c=a.c, unit=a.unit,
                w1=a.w1, w2=a.w2, log=log, scorer=scorer).run()
     if cleanup:
         cleanup()
     res["generator"] = a.generator
+    res["unit"] = a.unit
     res["plan_indices"] = idx
     if a.out:
         json.dump(res, open(a.out, "w", encoding="utf-8"), ensure_ascii=False, indent=1)

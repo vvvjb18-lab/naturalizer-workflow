@@ -47,7 +47,8 @@ import torch
 torch.set_grad_enabled(False)
 # The 12B llama-server shares this box; cap intra-op threads so BLAS does not
 # fight it for cores (Qwen report: oversubscription is the top CPU pitfall).
-torch.set_num_threads(max(2, min(4, os.cpu_count() or 4)))
+_THREADS = int(os.environ.get("DETECT_THREADS", "8") or 8)
+torch.set_num_threads(max(2, min(_THREADS, os.cpu_count() or 8)))
 
 import numpy as np
 
