@@ -61,6 +61,11 @@ const HELP = `v6.mjs — Workflow 8.0（選擇式管線：早停 × 手術 × �
   --force-budget       允許超過 30% 的刪減幅度（建議先人工確認內容取捨）
   --style-guide <json> 8.16 風格引導：注入 style_vector.py 的風格向量 JSON
   --seed <txt|json>    8.16 人類種子：語音轉錄 txt（自動抽特徵）或已抽好的 JSON
+  --mcts               8.17 MCTS 離散搜索取代 K 候選＋擇優
+  --mcts-iterations N  MCTS 迭代數（預設 20，報告建議上限 50）
+  --mcts-k N           每次擴展的分支數（預設 3）
+  --mcts-generator G   app（12B，預設）｜stub（無 LLM，測試用）
+  --zmq                8.17 啟用 ZMQ ROUTER/DEALER 異步評分橋
 `;
 
 function parseArgs(argv) {
@@ -119,6 +124,9 @@ async function main() {
     const p = cfg.pressets?.balanced || cfg.presets?.balanced || {};
     if (p.grammarThreshold != null) cfg.grammarThreshold = p.grammarThreshold;
   }
+  // 8.17 opt-in modes
+  const mctsMode = !!args.k.mcts;
+  const useZmq = !!args.k.zmq;
   const useCrossover = cfg.crossover !== false;
   const useAdaptive = cfg.adaptive !== false;
   const gramThreshold = cfg.grammarThreshold ?? 0.5;
@@ -291,9 +299,68 @@ async function main() {
       return sc.filter((p) => p < gramThreshold).length / sents.length;
     };
 
+    // 8.17: --mcts — run the CPU discrete search instead of K candidates.
+    const runMctsMode = async ({ iterations }) => {
+      const planPath = path.join(workDir, 'mcts-plan.json');
+      const targets = {};
+      for (const i of targetIdx) targets[i] = { units: plan.targets[i].units, joiner: plan.targets[i].joiner || ' ' };
+      fs.writeFileSync(planPath, JSON.stringify({ targets }), 'utf8');
+      const mctsOut = path.join(workDir, 'mcts-result.json');
+      const argv = [path.join(HERE, 'mcts_searcher.py'), '--plan', planPath, '--out', mctsOut,
+        '--iterations', String(iterations), '--generator', String(args.k['mcts-generator'] || 'app')];
+      if (useZmq) argv.push('--zmq');
+      console.log(`=== 8.17 MCTS 搜索（${iterations} 迭代，k=${args.k['mcts-k'] || 3}，generator=${args.k['mcts-generator'] || 'app'}${useZmq ? '，ZMQ' : ''}）===`);
+      const code = await new Promise((resolve) => {
+        const child = spawn(process.execPath === '' ? 'python' : 'python', argv, { cwd: HERE, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+        const fwd = (s) => { let b = ''; s.on('data', (c) => { b += c.toString('utf8'); const ls = b.split(/\r?\n/); b = ls.pop(); for (const l of ls) if (l.trim()) console.log(`  ${l}`); }); };
+        fwd(child.stdout); fwd(child.stderr);
+        child.on('error', (e) => { console.error(String(e.message)); resolve(1); });
+        child.on('close', (c) => resolve(c ?? 1));
+      });
+      if (code !== 0) throw new Error(`mcts_searcher exited ${code}`);
+      const res = JSON.parse(fs.readFileSync(mctsOut, 'utf8'));
+      const paras = {};
+      targetIdx.forEach((i, j) => { paras[i] = res.paras[j]; });
+      const prose = targetIdx.map((i) => paras[i]).filter(Boolean).join("\n\n");
+      const prosePath = path.join(workDir, 'candMCTS.prose.txt');
+      fs.writeFileSync(prosePath, prose + "\n", 'utf8');
+      const stats = candidateStats({ originalProse, prose, lang });
+      stats.coverage = 1;
+      const [sc] = await scoreTexts([prose]);
+      const dmg = await damageOf(prose);
+      const [origSc] = await scoreTexts([originalProse]);
+      const node = {
+        id: 'MCTS', crossover: false, paras, prose, prosePath, stats, score: sc,
+        grammarDamage: dmg, grammarDamagePre: dmg, surgeries: [], failures: [],
+        mcts: { iterations: res.iterations, visited: res.visited, elapsed_s: res.elapsed_s,
+                reward: res.score?.reward, root_reward: res.root_score?.reward,
+                median_iter_ms: res.per_iter_ms ? res.per_iter_ms.slice().sort((a, b) => a - b)[Math.floor(res.per_iter_ms.length / 2)] : null,
+                generator: res.generator, rejected: res.tree?.rejected },
+      };
+      console.log(`  MCTS 完成：reward ${fmt(res.root_score?.reward)} → ${fmt(res.score?.reward)} · `
+        + `gen ${fmt(sc?.p_ai_gen)} · CV ${fmt(stats.cv)} · ${res.elapsed_s}s（${node.mcts.median_iter_ms} ms/iter 中位）`);
+      return { chosen: node, originalScore: origSc || null, origDamage: await damageOf(originalProse) };
+    };
+
     // 2 ── generate candidates (adaptive early-stop) ───────────────────────
-    console.log(`=== 2/7 候選生成（K≤${candidatesN}${useAdaptive ? `，先 ${cfg.adaptiveFirst ?? 3} 個早停` : ''}）===`);
+    // 8.17: --mcts replaces the K-candidate + selection logic. Containers are
+    // declared here so the reporting section works in both modes.
     const candidates = [];
+    let chosen = null;
+    let pool = [];
+    let assembled = null;
+    let eligible = [];
+    let rejected = [];
+    let originalScore = null;
+    let origDamage = 0;
+    let bandFallback = null;
+    if (mctsMode) {
+      const iters = Math.max(1, parseInt(args.k['mcts-iterations'] ?? cfg.mcts?.iterations ?? 20, 10));
+      ({ chosen, originalScore, origDamage } = await runMctsMode({ iterations: iters }));
+      pool = [chosen];
+      eligible = [chosen];
+    } else {
+    console.log(`=== 2/7 候選生成（K≤${candidatesN}${useAdaptive ? `，先 ${cfg.adaptiveFirst ?? 3} 個早停` : ''}）===`);
     const stopCheck = async () => !useAdaptive
       ? false
       : candidates.length >= (cfg.adaptiveFirst ?? 3)
@@ -327,9 +394,9 @@ async function main() {
 
     // 3 ── offline scoring ─────────────────────────────────────────────────
     console.log('=== 3/7 離線評分（daemon：CoLA + tmr/EditLens/perplexity）===');
-    const origDamage = await damageOf(originalProse);
+    origDamage = await damageOf(originalProse);
     const scores = await scoreFiles([...candidates.map((c) => c.prosePath), path.join(workDir, 'original.prose.txt')]);
-    const originalScore = scores[scores.length - 1];
+    originalScore = scores[scores.length - 1];
     for (const s of scores.slice(0, -1)) {
       const c = candidates.find((x) => path.resolve(x.prosePath) === path.resolve(s.file));
       if (c) c.score = s;
@@ -387,15 +454,12 @@ async function main() {
     rejected.forEach((c) => console.log(`  cand${c.id} 淘汰（damage=${fmt(c.grammarDamage)} CV=${fmt(c.stats.cv)} cvRatio=${fmt(c.stats.cvRatio, 2)} coverage=${fmt(c.stats.coverage, 2)}）`));
     rejected.forEach((c) => console.log(`  cand${c.id} 淘汰（damage=${fmt(c.grammarDamage)} CV=${fmt(c.stats.cv)} cvRatio=${fmt(c.stats.cvRatio, 2)} coverage=${fmt(c.stats.coverage, 2)}）`));
 
-    let chosen = null;
-    let pool = [...candidates];
-    let assembled = null;
     // 8.3: flat document family — every candidate culled ONLY by the CV band
     // floor (their original CV sits far below the E2-calibrated 0.45). Two
     // rescue stages before giving up: (a) burstiness rebuild on the two best
     // rejected candidates, re-rank; (b) still nothing → deliver the best
     // available with a loud uncalibrated-band warning instead of dying.
-    let bandFallback = null;
+    bandFallback = null;
     if (!eligible.length && !docType.form && cfg.lowCvFallback?.enabled !== false) {
       const bandLo = (cfg.filters?.cvBand?.[0] ?? 0.45) * 0.9;
       const bandCulled = rejected.filter((c) => (c.stats?.coverage ?? 0) >= 1
@@ -556,6 +620,8 @@ async function main() {
     if (tie.length > 1) console.log(`  平手抉選（risk 差 ≤0.02，${tie.length} 候選）：選 ppl 較高者壓查重`);
     console.log(`  → 選定 ${chosen.crossover ? '重組 X' : `cand${chosen.id}`}`);
     }
+    }
+
 
     // 8.2: citation/reference year consistency — the pipeline preserves
     // citations verbatim, including the DRAFT's own in-text vs References
@@ -587,6 +653,9 @@ async function main() {
     if (docType.form) {
       console.log('=== 5.5/7 段級研磨：form 模式跳過（V2 配方不動 A）===');
       grindInfo = { action: 'skipped', reason: 'form mode (V2 recipe)' };
+    } else if (mctsMode) {
+      console.log('=== 5.5/7 段級研磨：--mcts 模式跳過（搜索已內含評估）===');
+      grindInfo = { action: 'skipped', reason: 'mcts mode' };
     } else if (!gc.enabled) {
       console.log('=== 5.5/7 段級研磨：停用（--no-grind）===');
       grindInfo = { action: 'disabled' };
@@ -1068,6 +1137,7 @@ async function main() {
       budget: budgetStats,
       grind: grindInfo,
       styleGuide: styleMeta,
+      mcts: mctsMode ? chosen.mcts : null,
       similarityPolish: simInfo,
       citationCheck: citeCheck ? { checked: citeCheck.checked, references: citeCheck.references, mismatches: citeCheck.mismatches, fixes: citeCheck.fixes } : null,
       qualitySurgery: qFix,
