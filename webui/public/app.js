@@ -342,12 +342,26 @@ function finish(ev) {
     const v6 = ev.v6 || {};
     const chosen = (v6.candidates || []).find((c) => c.id === v6.chosen) || {};
     const totalCands = (v6.candidates || []).length;
+    const a90 = v6.arch90 || {};
+    const fellBack = v6.chosen === 'orig' || totalCands === 0;
     const cards = [
       statCard('稿件類型', v6.docType?.form ? '模板／計劃書' : '文章', v6.docType?.form ? '已按模板類保守處理' : '文章類流程', ''),
-      statCard('採用版本', `第 ${v6.chosen ?? '—'} 個（共 ${totalCands} 個）`, '從多個版本中挑選最好', 'good'),
+      statCard('採用版本', fellBack ? '原稿（未改寫）' : `第 ${v6.chosen ?? '—'} 個（共 ${totalCands} 個）`,
+        fellBack ? '引擎無回應或候選全未通過驗證——只做機械修整，建議重跑一次' : '從多個版本中挑選最好', fellBack ? 'warn' : 'good'),
       statCard('逐句修正', `${chosen.surgeries ?? 0} 處`, '只改有問題的句子，保留自然語感', 'good'),
-      statCard('品質檢查', '已通過', '節奏・文法・引用與數字・論點一致', 'good'),
+      statCard('品質檢查', a90.finalVerdict ? (a90.finalVerdict.pass ? '已通過（三環否決）' : '未過（已回退綠點）') : '已通過',
+        fellBack ? '本輪未產生有效改寫' : '節奏・文法・引用與數字・論點一致', fellBack ? 'warn' : 'good'),
     ];
+    if (a90.anchorGate) {
+      const g = a90.anchorGate;
+      cards.push(statCard('課程品質門', g.grade === 'B+' ? 'B+ 可交付' : 'BELOW-B+',
+        g.pass ? '語域／引用／結構三維達 B+，並對照 A 級錨點剖面'
+               : `${g.fails.length} 項待修（${g.fails.map((f) => f.rule).join('、')}）——見風險卡「課程品質門」`,
+        g.pass ? 'good' : 'warn'));
+    }
+    if (fellBack) {
+      cards.push(statCard('⚠ 需要注意', '引擎或候選異常', '模型引擎離線（30 分鐘空閒自動退出）或全部候選被否決——本次只交付機械修整稿；請重啟 Humanizer 後重跑', 'warn'));
+    }
     $('summary').innerHTML = cards.join('');
     $('unresolvedCard').hidden = true;
     $('dlRisk').href = (ev.files && ev.files.report) || '#';
@@ -440,8 +454,8 @@ async function run() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(state.mode === 'v6'
         ? (docx
-            ? { mode: 'v6', target: $('lowAi').checked ? 'ideal' : 'balanced', arch90: $('arch90')?.checked || false, ...budget, docxName: docx.name, docxBase64: docx.base64 }
-            : { mode: 'v6', target: $('lowAi').checked ? 'ideal' : 'balanced', arch90: $('arch90')?.checked || false, ...budget, original })
+            ? { mode: 'v6', target: $('lowAi').checked ? 'ideal' : 'balanced', arch90: $('arch90')?.checked || false, anchor: $('anchorGate')?.checked || false, ...budget, docxName: docx.name, docxBase64: docx.base64 }
+            : { mode: 'v6', target: $('lowAi').checked ? 'ideal' : 'balanced', arch90: $('arch90')?.checked || false, anchor: $('anchorGate')?.checked || false, ...budget, original })
         : (docx
             ? {
                 docxName: docx.name,

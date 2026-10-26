@@ -18,7 +18,7 @@ const HOST = '127.0.0.1';
 const PORT = Number(process.env.PORT || 8790);
 const MAX_BODY = 12 * 1024 * 1024;
 const STARTED_AT = Date.now();
-const WORKFLOW_VERSION = '8.0';
+const WORKFLOW_VERSION = '9.0';
 const MAX_RUNTIME_MS = 60 * 60 * 1000;
 
 fs.mkdirSync(RUNS, { recursive: true });
@@ -177,6 +177,8 @@ function handleRun(req, res) {
       }
       // 9.0: layered architecture opt-in (router / veto gates / ledger)
       if (payload.arch90) args.push('--arch90');
+      // 9.0: course quality gate (B+) against the built-in HKU SPACE anchor
+      if (payload.anchor) args.push('--anchor', path.join(HERE, '..', 'pipeline', 'anchors'));
     } else {
       args = [PIPELINE, inputPath, '--out-dir', runDir, '--verify', verify, '--lang', lang];
       if (providedA) args.push('--humanized', providedAPath);
