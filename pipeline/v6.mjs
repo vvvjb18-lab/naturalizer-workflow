@@ -26,6 +26,11 @@ import {
   burstifyCandidate, cvOf,
 } from './candidates.mjs';
 import { grindParas, rescueContradictions, similarityPolish, styleGuard as styleGuardText } from './grind.mjs';
+import { createLedger, diffSummary } from './ledger.mjs';
+import { evaluateText } from './verify_gates.mjs';
+import { classifyDraft, ROUTE_EXIT } from './router.mjs';
+import { diagnoseText } from './diagnostics.mjs';
+import { buildArgumentMap, skeletonSurvived } from './argument_map.mjs';
 import { detectLang, splitSentences, wordCount, tokenSet, jaccard } from '../polish/src/text.mjs';
 import { factNumbers, citationsIn } from '../polish/src/checks.mjs';
 
@@ -67,6 +72,7 @@ const HELP = `v6.mjs — Workflow 8.0（選擇式管線：早停 × 手術 × �
   --mcts-generator G   app（12B，預設）｜stub（無 LLM，測試用）
   --mcts-unit U        paragraph（預設）｜sentence（對齊 8.4 句級研磨）
   --zmq                8.17 啟用 ZMQ ROUTER/DEALER 異步評分橋
+  --arch90             9.0 分層架構：L0 五狀態路由＋L3 三環否決＋L4 版本帳本＋L1 診斷＋L2 骨架檢查
   --shred              8.18 前置粉碎：先用 shredder.py 打散句法（事實守衛）
   --shred-rate R       粉碎觸發率（預設 0.5）
 `;
@@ -130,6 +136,7 @@ async function main() {
   // 8.17 opt-in modes
   const mctsMode = !!args.k.mcts;
   const useShred = !!args.k.shred;
+  const arch90 = !!args.k.arch90;
   const useZmq = !!args.k.zmq;
   const useCrossover = cfg.crossover !== false;
   const useAdaptive = cfg.adaptive !== false;
@@ -269,6 +276,26 @@ async function main() {
     console.log(`  ${targetIdx.length} 段 · ${unitTotal} unit · lang=${lang}`);
     console.log(`  文件型別：${docType.form ? 'form／模板（V2 配方）' : 'essay（CV 帶選擇）'}（label 率 ${fmt(docType.formScore, 2)}）`);
 
+    // 9.0 arch90 — L4 帳本建立＋L0 路由（文本期：S5 停改令／S3 警告）
+    let ledger = null, route = null, archFullText = null, archOrigCv = null;
+    if (arch90) {
+      ledger = createLedger(workDir, { docId: base });
+      archFullText = Array.isArray(plan.paragraphs) && plan.paragraphs.length
+        ? plan.paragraphs.map((p) => String(p || '')).join('\n\n')
+        : originalProse;
+      archOrigCv = cvOf(originalProse, lang);
+      ledger.append({ stage: 'original', before: archFullText, after: originalProse, verdict: { pass: true, vetoes: [], dimensions: {} }, meta: { note: '原稿入帳（回退基準）' } });
+      route = classifyDraft({ text: archFullText, gen: null, cv: archOrigCv, lang });
+      console.log(`  9.0 路由（文本期）：${route.state} —— ${route.advice}`);
+      if (route.state === 'S5') {
+        ledger.append({ stage: 'route', before: archFullText, after: archFullText, verdict: { pass: false, vetoes: [{ ring: 0, rule: 'routeS5', detail: route.advice }], dimensions: {} } });
+        console.error(`9.0 停改令（S5）：${route.advice}`);
+        await closeDetector().catch(() => {});
+        process.exit(ROUTE_EXIT.S5);
+      }
+      if (route.state === 'S3') console.log('  ⚠ S3：論證骨架將於交付時檢查（L2 重組本版僅記錄）');
+    }
+
     // sentence-level memo on the warm daemon
     const sentMemo = new Map();
     const scoreSents = async (sents) => {
@@ -298,6 +325,48 @@ async function main() {
       mid: (origProfile?.p_ai_gen ?? 0) > 0.4 && (origProfile?.p_ai_gen ?? 0) <= 0.8,
     };
     let candidatesN = cfg.candidates;
+    // 9.0 arch90 — L0 路由（評分期：S4 退回作者／S1 保守編輯）
+    if (arch90) {
+      route = classifyDraft({ text: archFullText, gen: profile.gen, cv: archOrigCv, lang });
+      console.log(`  9.0 路由（評分期）：${route.state} —— ${route.advice}`);
+      if (route.state === 'S4') {
+        ledger.append({ stage: 'route', before: archFullText, after: archFullText, verdict: { pass: false, vetoes: [{ ring: 0, rule: 'routeS4', detail: route.advice }], dimensions: {} } });
+        console.error(`9.0 停改令（S4）：${route.advice}`);
+        await closeDetector().catch(() => {});
+        process.exit(ROUTE_EXIT.S4);
+      }
+      if (route.state === 'S1') {
+        console.log('=== 9.0 路由：S1 保守編輯（跳過候選生成）===');
+        const parasC = {};
+        for (const i of targetIdx) parasC[i] = mechanicalPolish(originalsByPara[i], lang);
+        if (isDocx && !args.k['no-lt']) {
+          try {
+            const ltIn = path.join(workDir, 'ltmap-in.json'), ltOut = path.join(workDir, 'ltmap-out.json');
+            fs.writeFileSync(ltIn, JSON.stringify({ indices: targetIdx.map(Number), texts: targetIdx.map((i) => parasC[i]) }), 'utf8');
+            runLtFix(['fixmap', ltIn, ltOut, lang === 'zh' ? 'zh' : 'en-GB']);
+            if (fs.existsSync(ltOut)) {
+              const fm = JSON.parse(fs.readFileSync(ltOut, 'utf8'));
+              (fm.texts || []).forEach((t, j) => { if (targetIdx[j] != null) parasC[targetIdx[j]] = t; });
+            }
+          } catch (e) { console.log(`  LT 跳過：${e.message.slice(0, 60)}`); }
+        }
+        const proseC = targetIdx.map((i) => parasC[i]).filter(Boolean).join('\n\n');
+        const [scC] = await scoreTexts([proseC]);
+        const vC = evaluateText({ draft: originalProse, prose: proseC, lang, cvDraft: archOrigCv, cvProse: candidateStats({ originalProse, prose: proseC, lang }).cv });
+        ledger.append({ stage: 'conservative-delivery', before: originalProse, after: proseC, checks: { score: scC }, verdict: vC, meta: { route: 'S1' } });
+        fs.writeFileSync(path.join(outDir, `${base}.v6-A.prose.txt`), proseC + '\n', 'utf8');
+        if (isDocx) {
+          const mapPath = path.join(workDir, 'amap.json');
+          fs.writeFileSync(mapPath, JSON.stringify({ indices: targetIdx.map(Number), texts: targetIdx.map((i) => parasC[i]) }), 'utf8');
+          console.log(runBridge(['apply', input, mapPath, path.join(outDir, `${base}.v6-A.docx`)]));
+        }
+        const dC = diffSummary(originalProse, proseC, lang);
+        fs.writeFileSync(path.join(outDir, `${base}.v6.report.md`), `# 9.0 S1 保守編輯風險卡\n\n- 路由：**S1**（論證完整、語言可信：gen=${fmt(profile.gen)} · CV=${fmt(archOrigCv, 3)}）\n- 干預：機械標點＋LT 層；**不進候選生成、不研磨**\n- 改動：${dC.words.before} → ${dC.words.after} 詞（句 ${dC.sentences.before} → ${dC.sentences.after}，改寫 ${dC.changed}／新增 ${dC.added}／丟失 ${dC.removed}）\n- 三環否決：${vC.pass ? '全綠 ✓' : JSON.stringify(vC.vetoes)}\n- 帳本：${ledger.file}\n`);
+        console.log(`  S1 交付完成：改動 ${dC.words.before} → ${dC.words.after} 詞，否決環 ${vC.pass ? '全綠' : '有否決（見報告）'}`);
+        await closeDetector().catch(() => {});
+        process.exit(vC.pass ? 0 : 2);
+      }
+    }
     if (profile.extreme) {
       candidatesN = Math.min(cfg.candidates, cfg.extremePath?.candidates ?? 4);
       cfg.grind = { ...cfg.grind, roundsExtreme: cfg.extremePath?.rounds ?? 15 };
@@ -541,6 +610,18 @@ async function main() {
     }
 
     if (!chosen) {
+      // 9.0 arch90 — L3 否決環：第一/二環（內容正確性＋格式）一票否決，
+      // 在 NLI 守門之前過濾；第三環品質維度只記錄不否決。
+      if (arch90 && eligible.length) {
+        for (const c of eligible) {
+          c.archVerdict = evaluateText({ draft: originalProse, prose: c.prose, lang, nli: null, cvDraft: archOrigCv, cvProse: c.stats?.cv });
+          ledger.append({ stage: 'candidate', label: `cand${c.id}`, before: originalProse, after: c.prose, checks: { score: c.score, stats: c.stats }, verdict: c.archVerdict });
+        }
+        const vetoFree = eligible.filter((c) => c.archVerdict.pass);
+        if (vetoFree.length < eligible.length) console.log(`  9.0 否決制：${eligible.length - vetoFree.length} 個候選被第一/二環否決（${eligible.filter((c) => !c.archVerdict.pass).map((c) => `cand${c.id}:${c.archVerdict.vetoes[0].rule}`).join('、')}）`);
+        if (vetoFree.length) eligible = vetoFree;
+        else console.log('  ⚠ 9.0：全部候選被否決——保留原排名續走 NLI，交付前最終否決會回退原稿');
+      }
       if (useCrossover) {
       const poolOk = candidates.filter((c) => (c.stats?.coverage ?? 0) >= 1);
       if (poolOk.length >= 2) {
@@ -1068,6 +1149,31 @@ async function main() {
     }
 
 
+    // 9.0 arch90 — 交付前最終否決（L3）＋骨架存活檢查（L2）＋回退（L4）
+    let archFinal = null, archRolledBack = false, archSkeleton = null;
+    if (arch90) {
+      archFinal = evaluateText({ draft: originalProse, prose: chosen.prose, lang, nli: chosen.nli || null, cvDraft: archOrigCv, cvProse: chosen.stats?.cv });
+      ledger.append({ stage: 'delivery', before: originalProse, after: chosen.prose, verdict: archFinal, meta: { chosen: chosen.crossover ? 'X' : chosen.id, route: route?.state } });
+      if (!archFinal.pass) {
+        const rp = ledger.rollbackPoint();
+        if (rp === 0) {
+          console.log(`  ⚠ 9.0 交付否決（${archFinal.vetoes.map((v) => v.rule).join('、')}）→ 回退至原稿（帳本點 #0）`);
+          chosen.paras = {};
+          for (const i of targetIdx) chosen.paras[i] = originalsByPara[i];
+          chosen.prose = originalProse;
+          chosen.stats = candidateStats({ originalProse, prose: originalProse, lang });
+        } else {
+          console.log(`  ⚠ 9.0 交付否決（${archFinal.vetoes.map((v) => v.rule).join('、')}）——最近綠點為中間版本，保留現版並標記人工覆核（exit 2）`);
+        }
+        archRolledBack = true;
+      }
+      const skBefore = buildArgumentMap(originalProse, lang);
+      const skAfter = buildArgumentMap(chosen.prose, lang);
+      archSkeleton = skeletonSurvived(skBefore, skAfter);
+      if (!archSkeleton.ok) console.log(`  ⚠ 9.0 骨架檢查：${archSkeleton.problems.join('；')}`);
+      ledger.append({ stage: 'skeleton', before: originalProse, after: chosen.prose, verdict: { pass: archSkeleton.ok, vetoes: archSkeleton.problems.map((p) => ({ ring: 0, rule: 'skeleton', detail: p })), dimensions: {} } });
+    }
+
     const aDocx = path.join(outDir, `${base}.v6-A.docx`);
     const aProse = path.join(outDir, `${base}.v6-A.prose.txt`);
     fs.writeFileSync(aProse, chosen.prose + '\n', 'utf8');
@@ -1181,9 +1287,27 @@ async function main() {
       files: { aDocx, aProse, bDocx, bReport },
     };
     const v6Report = path.join(outDir, `${base}.v6.report.json`);
+    // 9.0 arch90 — 風險卡素材（在 report 寫入前宣告，供 JSON 與 md 共用）
+    let archSection = '';
+    let diag90 = null;
+    if (arch90) {
+      diag90 = diagnoseText(originalProse, lang);
+    }
+    if (arch90) {
+      report.arch90 = {
+        route: route?.state ?? null, routeAdvice: route?.advice ?? null,
+        diagnostics: diag90 ? { issues: diag90.issues, metrics: diag90.metrics } : null,
+        finalVerdict: archFinal, rolledBack: archRolledBack,
+        skeleton: archSkeleton, ledger: ledger?.file ?? null,
+      };
+    }
     fs.writeFileSync(v6Report, JSON.stringify(report, null, 1), 'utf8');
 
     const rows = pool.map((c) => `| ${c.crossover ? 'X' : c.id}${c.crossover ? '（重組）' : ''} | ${(c.stats.coverage * 100).toFixed(0)}% | ${fmt(c.stats.cv, 3)} | ${fmt(c.grammarDamagePre)} | ${fmt(c.grammarDamage)} | ${(c.surgeries || []).length} | ${fmt(c.score?.perplexity, 1)} | ${fmt(c.score?.p_ai_gen)} | ${fmt(c.score?.p_ai_edit)} | ${fmt(c.nli?.maxContradict)} | ${eligible.includes(c) ? fmt(c.risk) : '淘汰'} |`).join('\n');
+    if (arch90) {
+      const rep = ledger.report();
+      archSection = `\n## 9.0 分層架構（--arch90）\n\n- 路由：**${route?.state || '—'}** —— ${route?.advice || ''}\n- L1 診斷（原稿）：${diag90.issues.length ? diag90.issues.map((x) => `${x.id}〔${x.severity}〕`).join('、') : '無高/中問題'}\n- L3 否決紀錄：${rep.vetoes.length ? rep.vetoes.map((v) => `${v.rule}＠#${v.at}`).join('、') : '無'}\n- 交付否決：${archFinal ? (archFinal.pass ? '全綠 ✓' : `**未過**（${archFinal.vetoes.map((v) => v.rule).join('、')}）`) : '—'}${archRolledBack ? ' · **已回退**' : ''}\n- L2 骨架存活：${archSkeleton ? (archSkeleton.ok ? '✓' : `✗ ${archSkeleton.problems.join('；')}`) : '—'}\n- L4 帳本：${ledger.file}（${rep.entries} 筆 · 回退點 #${rep.rollbackPoint}）\n`;
+    }
     const md = `# Workflow 8.1 風險卡
 
 - 生成時間：${report.generatedAt}
@@ -1198,7 +1322,7 @@ ${rows}
 
 原稿基準：ppl ${fmt(originalScore?.perplexity, 1)} · gen ${fmt(originalScore?.p_ai_gen)} · edit ${fmt(originalScore?.p_ai_edit)} · 語法傷率 ${fmt(origDamage)}
 ${budgetStats ? `\n## 字數預算（7.6）\n\n- 上限 ${budgetStats.maxWords}${budgetStats.floorWords != null ? ` · 下限 ${budgetStats.floorWords}` : ''}：**${budgetStats.beforeWords} → ${budgetStats.afterWords} 詞**\n- 刪句 ${budgetStats.deletedSentences}（-${budgetStats.deletedWords} 詞） · 定向壓縮 ${budgetStats.compressedParas} 段${budgetStats.failedCompressions ? ` · 壓縮失敗 ${budgetStats.failedCompressions} 段` : ''}${budgetStats.cutRatio != null ? ` · 削幅 ${(budgetStats.cutRatio * 100).toFixed(0)}%` : ''}\n${budgetStats.cvWarn ? `- ⚠ 壓縮後 CV ${budgetStats.cvWarn} 低於安全帶——建議人工覆核節奏\n` : ''}` : ''}${grindInfo ? `\n## 段級研磨（8.0）\n\n- 動作：**${grindInfo.action === 'applied' ? '採用' : grindInfo.action === 'reverted' ? `回退（${grindInfo.reason}）` : grindInfo.action === 'skipped' ? `跳過（${grindInfo.reason || 'form 模式'}）` : grindInfo.action === 'no-op' ? '無段改善（文本不變）' : '停用'}**\n${grindInfo.preGen != null ? `- 整份 gen：${fmt(grindInfo.preGen)} → ${fmt(grindInfo.postGen)} · 語法傷率：${fmt(grindInfo.postDamage)}\n` : ''}${grindInfo.stats && grindInfo.stats.attempts ? `- 嘗試 ${grindInfo.stats.attempts}＝採用 ${grindInfo.stats.accepted}＋no-gain ${grindInfo.stats.noGain}＋拒收 ${grindInfo.stats.rejected}${grindInfo.stats.failed ? `＋失敗 ${grindInfo.stats.failed}` : ''} · ${grindInfo.stats.roundsRun} 輪\n` : ''}` : ''}${simInfo ? `\n## 查重打磨（8.2）\n\n- 動作：**${simInfo.action === 'applied' ? '採用' : simInfo.action === 'reverted' ? `回退（${simInfo.reason}）` : '無變化'}**\n${simInfo.pplBefore != null ? `- 整份 ppl：${fmt(simInfo.pplBefore, 1)} → ${fmt(simInfo.pplAfter, 1)}（較高＝較少通用措辭）\n` : ''}${simInfo.stats && simInfo.stats.moves && simInfo.stats.moves.length ? `- 改寫句：${simInfo.stats.moves.map((m) => `p${m.para + 1}s${m.sent + 1} ppl ${m.pplBefore}→${m.pplAfter}`).join('、')}\n` : ''}` : ''}${citeCheck && (citeCheck.mismatches.length || citeCheck.checked) ? `\n## 引用一致性（8.2）\n\n- 內文引用 ${citeCheck.checked} 個 · References 條目 ${citeCheck.references} 筆\n${citeCheck.fixes.length ? `- 已自動對齊：${citeCheck.fixes.map((f) => `${f.from} → ${f.to}`).join('、')}\n` : ''}${citeCheck.mismatches.filter((m) => !m.fixed).length ? `- ⚠ 需人工核對：${citeCheck.mismatches.filter((m) => !m.fixed).map((m) => `${m.inText} vs [${m.refYears.join('/')}]`).join('、')}\n` : ''}` : ''}${qFix && qFix.surgeries ? `\n## 二級品質手術（8.2，CoLA < ${qFix.threshold}）\n\n${qFix.list.map((s) => `- 「${s.before}」→「${s.after}」`).join('\n')}\n` : ''}
-${formCheck ? `\n## form 檢查\n\n引用 ${formCheck.citations} 個 / 數字 ${formCheck.numbers} 個：${formCheck.missingCitations.length || formCheck.missingNumbers.length ? `**缺 ${formCheck.missingCitations.length} 引用、${formCheck.missingNumbers.length} 數字，需人工核對**` : '全數保留 ✓'}\n` : ''}
+${formCheck ? `\n## form 檢查\n\n引用 ${formCheck.citations} 個 / 數字 ${formCheck.numbers} 個：${formCheck.missingCitations.length || formCheck.missingNumbers.length ? `**缺 ${formCheck.missingCitations.length} 引用、${formCheck.missingNumbers.length} 數字，需人工核對**` : '全數保留 ✓'}\n` : ''}${arch90 ? archSection : ''}
 ## A → B
 
 | 指標 | A（${chosen.crossover ? '重組X' : `cand${chosen.id}`}） | B | 變化 |
@@ -1229,6 +1353,10 @@ ${formCheck ? `\n## form 檢查\n\n引用 ${formCheck.citations} 個 / 數字 ${
     if (finScore) console.log(`交付終評：gen ${fmt(finScore.p_ai_gen)} ppl ${fmt(finScore.perplexity, 1)} edit ${fmt(finScore.p_ai_edit)}`);
     }
     console.log(`總耗時：${Math.round((Date.now() - T0) / 1000)}s（畫像 ${Math.round((profile.elapsedMs || 0) / 1000)}s）`);
+    if (arch90 && archFinal && !archFinal.pass) {
+      console.log('9.0：交付未過三環否決（已回退或標記人工覆核）——exit 2');
+      process.exitCode = 2;
+    }
   } finally {
     await closeDetector().catch(() => {});
   }

@@ -1,0 +1,19 @@
+{
+ "note": "hugo 研究產物（za212/naturalizer）校準點——來源 style_contract.md §9 九點全表（2026-10-26）。copula=is/are/was/were 每千詞；dose=正式語域語法錯誤每百詞（人工計數）。僅供 L5 族軸分析，閾值不得入生產判據（對我方語料已證反向）。",
+ "points": [
+  { "name": "anchor-Aplus (真人)", "turnitin": "0", "copula": 0.83, "dose": 2.4, "note": "HKU SPACE A+ 作文 28.5/30；錯誤密度高於 v0.9 仍 0%——課程容忍錨點式瑕疵" },
+  { "name": "v4.8 fourdayweek", "turnitin": "0", "copula": 4.37, "dose": 1.6, "note": "新題目一次性按剖面寫成——剖面可遷移的證據" },
+  { "name": "v0.95 urbanisation", "turnitin": "15", "copula": 4.29, "dose": 1.9, "note": "13 輪迭代＋劑量加倍" },
+  { "name": "v0.9", "turnitin": "26", "copula": 4.32, "dose": 0.9, "note": "8 處滑落" },
+  { "name": "v0.8", "turnitin": "37", "copula": 4.32, "dose": 0, "note": "零錯誤＋P5 語域改寫" },
+  { "name": "R4.9 urbanisation", "turnitin": "41", "copula": 5.93, "dose": 0, "note": "原版" },
+  { "name": "v1.2 onlineshopping", "turnitin": "42", "copula": 11.95, "dose": 3.5, "note": "新鮮骨架＋終端劑量——劑量救不了新鮮 AI 骨架" },
+  { "name": "v2.1 parttime", "turnitin": "91", "copula": 12.67, "dose": 3.2, "note": "每段金句收尾——拋光密度是指紋；比原始 AI 基準更差" }
+ ],
+ "lessons": [
+  "劑量軸只在同一文本家族內單調（0→37-41%、0.9→26%、1.9→15%、1.6→0%）；跨族由 copula 主導（12.67→42-91% vs 4.37→0%）",
+  "拋光密度與品質評分正相關、與 Turnitin 正相關——『LLM 式的優秀』是指紋（v2.1 屍檢）",
+  "169 特徵對 Turnitin 回歸預測 MAE 33pp——特徵只能做門檻設計，不能做分數預測",
+  "我方交叉驗證（2026-10-26）：copula 閘門對 naturalizer-workflow 兩個文件族反向（A1-V2 17.9/k→0%）——閾值是文件族特定的"
+ ]
+}

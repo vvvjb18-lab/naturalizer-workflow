@@ -1,0 +1,344 @@
+{
+ "report": {
+  "generated": "2026-10-26T16:37:10.775Z",
+  "families": {
+   "naturalizer-workflow": {
+    "n": 21,
+    "pass": 10,
+    "axes": {
+     "cv": {
+      "key": "cv",
+      "dir": "<=",
+      "threshold": 0.644,
+      "acc": 0.62,
+      "n": 21
+     },
+     "gen": {
+      "key": "gen",
+      "dir": "<=",
+      "threshold": 0.048,
+      "acc": 0.81,
+      "n": 21
+     }
+    }
+   },
+   "hugo-profile": {
+    "n": 8,
+    "pass": 3,
+    "axes": {
+     "copula": {
+      "key": "copula",
+      "dir": "<=",
+      "threshold": 4.29,
+      "acc": 0.88,
+      "n": 8
+     },
+     "dose": {
+      "key": "dose",
+      "dir": ">=",
+      "threshold": 1.6,
+      "acc": 0.75,
+      "n": 8
+     }
+    }
+   },
+   "merged": {
+    "n": 29,
+    "pass": 13,
+    "axes": {
+     "cv": {
+      "key": "cv",
+      "dir": "<=",
+      "threshold": 0.644,
+      "acc": 0.62,
+      "n": 21
+     },
+     "gen": {
+      "key": "gen",
+      "dir": "<=",
+      "threshold": 0.048,
+      "acc": 0.81,
+      "n": 21
+     },
+     "copula": {
+      "key": "copula",
+      "dir": "<=",
+      "threshold": 4.29,
+      "acc": 0.88,
+      "n": 8
+     },
+     "dose": {
+      "key": "dose",
+      "dir": ">=",
+      "threshold": 1.6,
+      "acc": 0.75,
+      "n": 8
+     }
+    }
+   }
+  }
+ },
+ "points": [
+  {
+   "name": "original",
+   "pass": false,
+   "feats": {
+    "cv": 0.393,
+    "gen": 0.559
+   },
+   "turnitin": "~100(presumed)"
+  },
+  {
+   "name": "final2.0",
+   "pass": false,
+   "feats": {
+    "cv": 0.41,
+    "gen": 0.255
+   },
+   "turnitin": "59"
+  },
+  {
+   "name": "final3.0",
+   "pass": true,
+   "feats": {
+    "cv": 0.644,
+    "gen": 0.151
+   },
+   "turnitin": "<20"
+  },
+  {
+   "name": "final5.0",
+   "pass": true,
+   "feats": {
+    "cv": 0.414,
+    "gen": 0.046
+   },
+   "turnitin": "<20"
+  },
+  {
+   "name": "final5.1",
+   "pass": false,
+   "feats": {
+    "cv": 0.538,
+    "gen": 0.375
+   },
+   "turnitin": "25"
+  },
+  {
+   "name": "final6.0",
+   "pass": false,
+   "feats": {
+    "cv": 0.39,
+    "gen": 0.058
+   },
+   "turnitin": "56"
+  },
+  {
+   "name": "A1計劃 40a (終修版)",
+   "pass": false,
+   "feats": {
+    "cv": 0.756,
+    "gen": 0.975
+   },
+   "turnitin": "40"
+  },
+  {
+   "name": "A1計劃 40b Template(2)",
+   "pass": false,
+   "feats": {
+    "cv": 0.726,
+    "gen": 0.746
+   },
+   "turnitin": "40"
+  },
+  {
+   "name": "A1計劃 V3",
+   "pass": false,
+   "feats": {
+    "cv": 0.795,
+    "gen": 0.73
+   },
+   "turnitin": "24"
+  },
+  {
+   "name": "A1計劃 V2",
+   "pass": true,
+   "feats": {
+    "cv": 0.726,
+    "gen": 0.959
+   },
+   "turnitin": "0"
+  },
+  {
+   "name": "A1計劃 V7",
+   "pass": false,
+   "feats": {
+    "cv": 0.846,
+    "gen": 0.98
+   },
+   "turnitin": "31"
+  },
+  {
+   "name": "final6.1",
+   "pass": false,
+   "feats": {
+    "cv": 0.504,
+    "gen": 0.249
+   },
+   "turnitin": "29"
+  },
+  {
+   "name": "H2_ideal (evolve seed14)",
+   "pass": true,
+   "feats": {
+    "cv": 0.534,
+    "gen": 0.031
+   },
+   "turnitin": "<20 (not surfaced)"
+  },
+  {
+   "name": "H4_prodLT (production A + LT)",
+   "pass": true,
+   "feats": {
+    "cv": 0.498,
+    "gen": 0.048
+   },
+   "turnitin": "<20 (not surfaced)"
+  },
+  {
+   "name": "E2-grind (X + grind)",
+   "pass": true,
+   "feats": {
+    "cv": 0.621,
+    "gen": 0.03
+   },
+   "turnitin": "0 AI / 13 similarity / 0 flags"
+  },
+  {
+   "name": "E2-oneclick81 (一键 8.1, code B398E0B859)",
+   "pass": true,
+   "feats": {
+    "cv": 0.477,
+    "gen": 0.02
+   },
+   "turnitin": "0 AI / 22 similarity / 0 flags"
+  },
+  {
+   "name": "E2-oneclick82 (一键 8.2, code 05B0C1E1EB)",
+   "pass": true,
+   "feats": {
+    "cv": 0.582,
+    "gen": 0.034
+   },
+   "turnitin": "0 AI / 16 similarity / 0 flags"
+  },
+  {
+   "name": "highAI-0983 (OriginCheck, code ADAC)",
+   "pass": false,
+   "feats": {
+    "cv": 0.27,
+    "gen": 0.983
+   },
+   "turnitin": "98 AI (origincheck channel)"
+  },
+  {
+   "name": "assault-0649 (8.4 句級研磨, OriginCheck, code RCVS)",
+   "pass": true,
+   "feats": {
+    "cv": 0.31,
+    "gen": 0.762
+   },
+   "turnitin": "8 AI (origincheck channel)"
+  },
+  {
+   "name": "assault-0782 (8.6/8.7 攻堅, OriginCheck, code UBVS)",
+   "pass": false,
+   "feats": {
+    "cv": 0.356,
+    "gen": 0.782
+   },
+   "turnitin": "41 AI (origincheck channel)"
+  },
+  {
+   "name": "assault-0573 (8.8/8.9 攻堅, OriginCheck, code XU1M)",
+   "pass": true,
+   "feats": {
+    "cv": 0.374,
+    "gen": 0.573
+   },
+   "turnitin": "0 AI (origincheck channel)"
+  },
+  {
+   "name": "anchor-Aplus (真人)",
+   "pass": true,
+   "feats": {
+    "copula": 0.83,
+    "dose": 2.4
+   },
+   "turnitin": "0"
+  },
+  {
+   "name": "v4.8 fourdayweek",
+   "pass": true,
+   "feats": {
+    "copula": 4.37,
+    "dose": 1.6
+   },
+   "turnitin": "0"
+  },
+  {
+   "name": "v0.95 urbanisation",
+   "pass": true,
+   "feats": {
+    "copula": 4.29,
+    "dose": 1.9
+   },
+   "turnitin": "15"
+  },
+  {
+   "name": "v0.9",
+   "pass": false,
+   "feats": {
+    "copula": 4.32,
+    "dose": 0.9
+   },
+   "turnitin": "26"
+  },
+  {
+   "name": "v0.8",
+   "pass": false,
+   "feats": {
+    "copula": 4.32,
+    "dose": 0
+   },
+   "turnitin": "37"
+  },
+  {
+   "name": "R4.9 urbanisation",
+   "pass": false,
+   "feats": {
+    "copula": 5.93,
+    "dose": 0
+   },
+   "turnitin": "41"
+  },
+  {
+   "name": "v1.2 onlineshopping",
+   "pass": false,
+   "feats": {
+    "copula": 11.95,
+    "dose": 3.5
+   },
+   "turnitin": "42"
+  },
+  {
+   "name": "v2.1 parttime",
+   "pass": false,
+   "feats": {
+    "copula": 12.67,
+    "dose": 3.2
+   },
+   "turnitin": "91"
+  }
+ ]
+}

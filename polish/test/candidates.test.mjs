@@ -111,17 +111,20 @@ test('surgicalRepair regenerates damaged sentences from the original', async () 
 });
 
 
-test('shouldStopEarly stops only on in-zone candidates (7.0)', () => {
-  const mk = (cv, dmg, cov = 1) => ({ stats: { cv, coverage: cov }, grammarDamagePre: dmg });
-  // balanced, essay: needs CV in band AND low damage
+test('shouldStopEarly stops only on in-zone candidates (7.0, gen gate 8.1)', () => {
+  const mk = (cv, dmg, cov = 1, gen = 0.05) => ({ stats: { cv, coverage: cov }, grammarDamagePre: dmg, score: { p_ai_gen: gen } });
+  // balanced, essay: needs CV in band AND low damage AND gen under gate
   assert.equal(shouldStopEarly([mk(0.3, 0), mk(0.5, 0)], {}), true);
   assert.equal(shouldStopEarly([mk(0.5, 0.2)], {}), false);
   assert.equal(shouldStopEarly([mk(0.3, 0)], {}), false);
+  assert.equal(shouldStopEarly([mk(0.5, 0, 1, 0.5)], {}), false); // 8.1 gen gate: 0.5 > 0.10
+  assert.equal(shouldStopEarly([mk(0.5, 0)], { genGate: 0.02 }), false); // custom gate
   // ideal: roughness band
   assert.equal(shouldStopEarly([mk(0.5, 0.1)], { target: 'ideal' }), true);
   assert.equal(shouldStopEarly([mk(0.5, 0)], { target: 'ideal' }), false);
-  // form: damage only
+  // form: damage only (gen gate still applies)
   assert.equal(shouldStopEarly([mk(0.2, 0.02)], { formMode: true }), true);
+  assert.equal(shouldStopEarly([mk(0.2, 0.02, 1, 0.9)], { formMode: true }), false);
   // coverage broken never stops
   assert.equal(shouldStopEarly([mk(0.5, 0, 0.8)], {}), false);
 });
