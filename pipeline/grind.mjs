@@ -13,6 +13,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { completeUnit, validateUnit, cloakNumbers, nliPairs, grammarScores } from './candidates.mjs';
 import { splitSentences, tokenSet, jaccard, wordCount } from '../polish/src/text.mjs';
+import { factNumbers } from '../polish/src/checks.mjs';
+import { scrubPronounOne } from './verify_gates.mjs';
 import { scoreTexts, closeDetector } from './detector_client.mjs';
 
 const DEFAULT_TEMPS = [1.0, 1.15, 0.9, 1.05];
@@ -401,6 +403,16 @@ export async function repetitionReorg({ paras, originalsByPara, targetIdx, lang,
         const out = restore(await completeUnit({ text: cloaked, sampling: { temperature: attempt === 0 ? 1.0 : 1.1, topP: 0.95 }, instruction: DEDUP_INSTR }));
         const v = validateUnit(orig, out, lang);
         if (!v.ok) { log(`  p${worse + 1} rejected (${v.reason})`); continue; }
+        // 9.0: invented facts — hz regen may add numbers the original never had
+        // ("one of the great things" class). validateUnit only guards drops.
+        const inv = (() => {
+          const mb = new Map();
+          for (const x of factNumbers(scrubPronounOne(out))) mb.set(x, (mb.get(x) || 0) + 1);
+          const ma = new Map();
+          for (const x of factNumbers(scrubPronounOne(orig))) ma.set(x, (ma.get(x) || 0) + 1);
+          return [...mb].filter(([x, n]) => n > (ma.get(x) || 0)).map(([x]) => x);
+        })();
+        if (inv.length) { log(`  p${worse + 1} 發明數字拒收（${inv.slice(0, 4).join(' ')}）`); continue; }
         const newJac = jaccard(tokenSet(out, lang), tokenSet(paras[neighbor] || '', lang));
         if (newJac >= 0.35) { log(`  p${worse + 1} 仍與鄰段重複（${newJac.toFixed(2)}）`); continue; }
         const [pair] = await nliPairs([[orig, out]]);

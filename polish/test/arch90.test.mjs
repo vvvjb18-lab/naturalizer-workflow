@@ -35,7 +35,7 @@ test('ledger append/rollbackPoint/report', () => {
     const original = 'Original text one. Original text two.';
     led.append({ stage: 'original', before: original, after: original, verdict: { pass: true } });
     led.append({ stage: 'cand', before: original, after: 'Bad edit drops numbers 42.', verdict: { pass: false, vetoes: [{ ring: 1, rule: 'missingNumbers' }] } });
-    led.append({ stage: 'cand2', before: 'Bad edit drops numbers 42.', after: 'Good edit keeps 42. Original text two-ish.', verdict: { pass: true } });
+    led.append({ stage: 'cand2', before: 'Bad edit drops numbers 42.', after: 'Good edit keeps 42. Original text two-ish.', verdict: { pass: true }, meta: { paras: { 0: 'Good edit keeps 42. Original text two-ish.' } } });
     assert.equal(led.size, 3);
     assert.equal(led.rollbackPoint(), 2);
     assert.match(led.textAt(2), /Good edit keeps 42/);
@@ -216,4 +216,37 @@ test('pronoun "one" in rewrite no longer triggers inventedNumbers (9.0 scrub)', 
   // 量詞用法仍受保護：one percent 是事實數字
   const v2 = evaluateText({ draft, prose: prose.replace('One of', 'One percent of') + ' Adoption rose by one percent.', lang: 'en' });
   assert.ok(v2.vetoes.some((x) => x.rule === 'inventedNumbers'), 'real quantifier one should be caught');
+});
+
+// ── 9.0 第三輪：回退檢查點縫隙 / 作者錨定距離 ────────────────────────────────
+
+test('rollbackPoint skips green entries without paragraph mapping', () => {
+  const dir = tmp();
+  try {
+    const led = createLedger(dir, { docId: 't' });
+    led.append({ stage: 'original', before: 'o', after: 'o', verdict: { pass: true } });
+    led.append({ stage: 'candidate', label: 'cand1', before: 'o', after: 'c1', verdict: { pass: true }, meta: { paras: { 0: 'c1' } } });
+    led.append({ stage: 'skeleton', before: 'o', after: 'c1', verdict: { pass: true } });   // 無映射，不可作為回退點
+    led.append({ stage: 'delivery', before: 'o', after: 'bad', verdict: { pass: false, vetoes: [{ ring: 1, rule: 'x' }] } });
+    assert.equal(led.rollbackPoint(), 1);
+    // 原稿之後只有無映射綠點 → 回 #0
+    fs.mkdirSync(dir + '2', { recursive: true });
+    const led2 = createLedger(dir + '2', { docId: 't2' });
+    led2.append({ stage: 'original', before: 'o', after: 'o', verdict: { pass: true } });
+    led2.append({ stage: 'skeleton', before: 'o', after: 'x', verdict: { pass: true } });
+    led2.append({ stage: 'delivery', before: 'o', after: 'bad', verdict: { pass: false, vetoes: [{ ring: 1, rule: 'x' }] } });
+    assert.equal(led2.rollbackPoint(), 0);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); fs.rmSync(dir + '2', { recursive: true, force: true }); }
+});
+
+test('diagnostics authorDrift flags style distance from author sample', () => {
+  // 作者樣本：長句鬆散、低 CV；文稿：碎片化高 CV
+  const author = Array.from({ length: 5 }, (_, i) => `The committee reviewed the proposal carefully during the meeting and discussed every line of the budget with great attention before reaching any decision at all in the end, which took a while, ${i}.`).join('\n\n');
+  const draft = 'Short point here. Very long sentence with many clauses and qualifiers stretching across the whole paragraph width. Another short one. Then an extremely extended sentence that keeps going and going and carries multiple subordinate clauses until it finally lands somewhere unexpected.';
+  const d = diagnoseText(draft, 'en', { authorSample: author });
+  assert.ok(d.metrics.authorDistance, 'authorDistance should be computed');
+  assert.ok(d.issues.some((x) => x.id === 'authorDrift'), JSON.stringify(d.issues.map((x) => x.id)));
+  // 無作者樣本時不產生 authorDrift
+  const d2 = diagnoseText(draft, 'en');
+  assert.ok(!d2.issues.some((x) => x.id === 'authorDrift'));
 });

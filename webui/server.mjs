@@ -175,6 +175,8 @@ function handleRun(req, res) {
           args.push('--floor-words', String(payload.floorWords));
         }
       }
+      // 9.0: layered architecture opt-in (router / veto gates / ledger)
+      if (payload.arch90) args.push('--arch90');
     } else {
       args = [PIPELINE, inputPath, '--out-dir', runDir, '--verify', verify, '--lang', lang];
       if (providedA) args.push('--humanized', providedAPath);

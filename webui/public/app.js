@@ -440,8 +440,8 @@ async function run() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(state.mode === 'v6'
         ? (docx
-            ? { mode: 'v6', target: $('lowAi').checked ? 'ideal' : 'balanced', ...budget, docxName: docx.name, docxBase64: docx.base64 }
-            : { mode: 'v6', target: $('lowAi').checked ? 'ideal' : 'balanced', ...budget, original })
+            ? { mode: 'v6', target: $('lowAi').checked ? 'ideal' : 'balanced', arch90: $('arch90')?.checked || false, ...budget, docxName: docx.name, docxBase64: docx.base64 }
+            : { mode: 'v6', target: $('lowAi').checked ? 'ideal' : 'balanced', arch90: $('arch90')?.checked || false, ...budget, original })
         : (docx
             ? {
                 docxName: docx.name,

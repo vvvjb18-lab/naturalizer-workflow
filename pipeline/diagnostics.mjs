@@ -14,7 +14,7 @@ const cvOf = (xs) => {
 // 收尾金句偵測（v2.1 91% 的屍檢教訓：每段落點都是精心打造的句子＝指紋）
 const APHORISM_RE = /\b(?:lesson|truth|bottom line|pays? itself|pay themselves|teaches|no lecture|stays? close to (?:zero|nothing)|serves the degree|depends on whether|ultimately|not the \w+ but the \w+|which no \w+ teaches|now more than)\b/i;
 
-export function diagnoseText(text, lang = 'en') {
+export function diagnoseText(text, lang = 'en', { authorSample = null } = {}) {
   const paras = splitParagraphs(text);
   const sents = splitSentences(text, lang);
   const words = wordCount(text, lang) || 1;
@@ -81,6 +81,31 @@ export function diagnoseText(text, lang = 'en') {
   metrics.unsourcedStats = unsourced.length;
   if (unsourced.length >= 3) {
     issues.push({ id: 'unsourcedStats', severity: 'high', evidence: `${unsourced.length} 個含數字句 80 字內無引用（如「${unsourced[0]}…」）` });
+  }
+
+  // ── 作者錨定距離（9.0 L1：偏離作者真實寫作樣本＝文體不一致；8.16 seed 基建）
+  if (authorSample && wordCount(authorSample, lang) >= 80) {
+    const shape = (t) => {
+      const ss = splitSentences(t, lang).map((s) => wordCount(s.text, lang));
+      const pp = splitParagraphs(t).map((p) => wordCount(p.text, lang)).filter((n) => n > 0);
+      const mean = ss.reduce((a, b) => a + b, 0) / Math.max(1, ss.length);
+      const cv = (xs) => (xs.length > 1 && mean ? Math.sqrt(xs.reduce((a, b) => a + (b - mean) ** 2, 0) / xs.length) / mean : 0);
+      return {
+        sentenceCv: cv(ss),
+        commaPer1k: ((t.match(/,/g) || []).length / (wordCount(t, lang) || 1)) * 1000,
+        paraLenCv: cv(pp),
+      };
+    };
+    const a = shape(authorSample), b = shape(text);
+    metrics.authorDistance = {
+      sentenceCv: +(b.sentenceCv - a.sentenceCv).toFixed(3),
+      commaPer1k: +(b.commaPer1k - a.commaPer1k).toFixed(1),
+      paraLenCv: +(b.paraLenCv - a.paraLenCv).toFixed(3),
+    };
+    const drift = Object.entries(metrics.authorDistance).filter(([k, d]) => Math.abs(d) >= Math.max(0.4 * Math.abs(a[k] || 1), k === 'commaPer1k' ? 15 : 0.08));
+    if (drift.length) {
+      issues.push({ id: 'authorDrift', severity: 'medium', evidence: `偏離作者樣本：${drift.map(([k, d]) => `${k} ${d > 0 ? '+' : ''}${d}`).join('、')}（錨點 sentenceCv ${a.sentenceCv.toFixed(2)}／comma ${a.commaPer1k.toFixed(0)}/k）` });
+    }
   }
 
   return { metrics, issues };

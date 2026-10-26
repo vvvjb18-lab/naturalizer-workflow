@@ -81,10 +81,14 @@ export function createLedger(workDir, { docId = '' } = {}) {
     entryAt(id) {
       return entries[id] || null;
     },
-    /** 最後一個「三環全綠」的版本；沒有則回 0（原稿）。 */
+    /** 最後一個「三環全綠且可回退」的版本（有段落映射或為 #0 原稿）；
+     *  skeleton/reorg 等檢查類條目不攜帶段落映射，不作為回退點。 */
     rollbackPoint() {
       for (let i = entries.length - 1; i >= 0; i--) {
-        if (entries[i].verdict?.pass === true) return entries[i].id;
+        const e = entries[i];
+        if (e.verdict?.pass !== true) continue;
+        if (i === 0) return 0;
+        if (e.meta?.paras && Object.keys(e.meta.paras).length) return i;
       }
       return 0;
     },

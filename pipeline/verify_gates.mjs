@@ -27,6 +27,7 @@ const multisetDiff = (a, b) => {
 // 在比較前洗掉；量詞用法（one percent / one hundred）保留。
 const PRONOUN_ONE = /\b(?<!no\s+)one\b(?!\s*(?:hundred|thousand|million|billion|percent|%))/gi;
 const scrubPronounOne = (t) => t.replace(PRONOUN_ONE, ' ');
+export { scrubPronounOne };
 
 function containmentRatio(prose, draft, lang) {
   const ds = splitSentences(draft, lang).map((s) => tokenSet(s.text, lang));

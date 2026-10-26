@@ -381,7 +381,7 @@ async function main() {
         const proseC = targetIdx.map((i) => parasC[i]).filter(Boolean).join('\n\n');
         const [scC] = await scoreTexts([proseC]);
         const vC = evaluateText({ draft: originalProse, prose: proseC, lang, cvDraft: archOrigCv, cvProse: candidateStats({ originalProse, prose: proseC, lang }).cv });
-        ledger.append({ stage: 'conservative-delivery', before: originalProse, after: proseC, checks: { score: scC }, verdict: vC, meta: { route: 'S1' } });
+        ledger.append({ stage: 'conservative-delivery', before: originalProse, after: proseC, checks: { score: scC }, verdict: vC, meta: { route: 'S1', paras: parasC } });
         fs.writeFileSync(path.join(outDir, `${base}.v6-A.prose.txt`), proseC + '\n', 'utf8');
         if (isDocx) {
           const mapPath = path.join(workDir, 'amap.json');
@@ -636,7 +636,7 @@ async function main() {
         // 9.0: even hard filters killed everything — the ledger #0 (deduped
         // original) is deterministic-green by definition; deliver it and let
         // the delivery verdict + risk card speak.
-        chosen = { id: 'orig', paras: { ...originalsByPara }, prose: originalProse, stats: candidateStats({ originalProse, prose: originalProse, lang }), score: originalScore, grammarDamage: 0, surgeries: [], failures: [] };
+        chosen = { id: 'orig', paras: { ...originalsByPara }, prose: originalProse, stats: candidateStats({ originalProse, prose: originalProse, lang }), score: originalScore, grammarDamage: 0, surgeries: [], failures: [], archFrozen: true };
         console.log(`⚠ 9.0：無候選通過硬過濾——以去重後原稿交付（帳本 #0）`);
       } else {
         throw new Error('沒有候選通過硬過濾；提高 --candidates 或放寬 v6.config.json');
@@ -778,7 +778,7 @@ async function main() {
     if (!passing.length) {
       if (arch90) {
         console.log('  ⚠ 9.0：無候選通過（硬過濾/否決環/NLI）——以去重後原稿交付（帳本 #0 為最後綠點）');
-        chosen = { id: 'orig', paras: { ...originalsByPara }, prose: originalProse, stats: candidateStats({ originalProse, prose: originalProse, lang }), score: originalScore, grammarDamage: 0, surgeries: [], failures: [] };
+        chosen = { id: 'orig', paras: { ...originalsByPara }, prose: originalProse, stats: candidateStats({ originalProse, prose: originalProse, lang }), score: originalScore, grammarDamage: 0, surgeries: [], failures: [], archFrozen: true };
       } else throw new Error('所有 eligible 候選都被 NLI 擋下');
     } else {
       passing.sort((a, b) => a.risk - b.risk);
@@ -821,9 +821,9 @@ async function main() {
     // then accept only if the whole-text score improved AND the grammar
     // damage stayed inside the delivery band; otherwise revert to pre-grind.
     let grindInfo = null;
-    if (docType.form) {
-      console.log('=== 5.5/7 段級研磨：form 模式跳過（V2 配方不動 A）===');
-      grindInfo = { action: 'skipped', reason: 'form mode (V2 recipe)' };
+    if (docType.form || (arch90 && chosen.archFrozen)) {
+      console.log(docType.form ? '=== 5.5/7 段級研磨：form 模式跳過（V2 配方不動 A）===' : '=== 5.5/7 段級研磨：9.0 凍結（最後綠點交付，不做模型重寫）===');
+      grindInfo = docType.form ? { action: 'skipped', reason: 'form mode (V2 recipe)' } : { action: 'skipped', reason: 'arch90 frozen last-green delivery' };
     } else if (mctsMode) {
       console.log('=== 5.5/7 段級研磨：--mcts 模式跳過（搜索已內含評估）===');
       grindInfo = { action: 'skipped', reason: 'mcts mode' };
@@ -934,8 +934,8 @@ async function main() {
     // Whole-text acceptance: stay inside the delivery band, else revert.
     let simInfo = null;
     const sp = { enabled: cfg.similarityPolish?.enabled !== false, worst: cfg.similarityPolish?.worst ?? 3 };
-    if (docType.form || !sp.enabled || lang !== 'en') {
-      simInfo = { action: 'skipped', reason: docType.form ? 'form mode' : (!sp.enabled ? 'disabled' : 'lang') };
+    if (docType.form || !sp.enabled || lang !== 'en' || (arch90 && chosen.archFrozen)) {
+      simInfo = { action: 'skipped', reason: docType.form ? 'form mode' : (!sp.enabled ? 'disabled' : (arch90 && chosen.archFrozen) ? 'arch90 frozen' : 'lang') };
     } else {
       console.log(`=== 5.6/7 查重打磨（重生最 stock 的 ${sp.worst} 句，帶內驗收）===`);
       const preScore = chosen.score;
@@ -1034,7 +1034,7 @@ async function main() {
     // as step 4), then NLI-guard each changed paragraph and revert any drift.
     let qFix = null;
     const q = cfg.qualitySurgery ?? {};
-    if (!docType.form && q.threshold) {
+    if (!docType.form && q.threshold && !(arch90 && chosen.archFrozen)) {
       console.log(`=== 5.7/7 二級品質手術（CoLA < ${q.threshold}，最多 ${q.maxSentences ?? 4} 句）===`);
       const preT2 = { ...chosen.paras };
       const repaired = await surgicalRepair({
@@ -1127,7 +1127,7 @@ async function main() {
     // sentence (academic register instruction), every change behind
     // styleGuard + per-sentence NLI; whole-text band check reverts on drift.
     let regFix = null;
-    if (!docType.form && lang === 'en' && cfg.registerSurgery?.enabled !== false) {
+    if (!docType.form && lang === 'en' && cfg.registerSurgery?.enabled !== false && !(arch90 && chosen.archFrozen)) {
       const regRe = [
         /\b(you|your)\b/i,
         /\b(it's|they're|don't|can't|won't|isn't|you'll|we'll)\b/i,
@@ -1210,6 +1210,8 @@ async function main() {
       // L2: S3 路由——重複論證重組（先於最終否決，讓否決環覆蓋重組後文本）
       if (route?.state === 'S3') {
         const beforeProse = chosen.prose;
+        const beforeParas = { ...chosen.paras };
+        const beforeScore = chosen.score, beforeStats = chosen.stats;
         try {
           archReorg = await repetitionReorg({ paras: chosen.paras, originalsByPara, targetIdx, lang, log: (m) => console.log(`  重組：${m}`) });
           if (archReorg.action === 'applied') {
@@ -1219,10 +1221,18 @@ async function main() {
             chosen.stats = stR;
             const [scR] = await scoreTexts([chosen.prose]);
             if (scR) chosen.score = { ...(chosen.score || {}), ...scR };
-            console.log(`  9.0 重組：${archReorg.moves}/${archReorg.pairs} 段對消除重複`);
+            // 重組文本也要過第一環（事實基準），不過即整體回退
+            const reorgV = evaluateText({ draft: originalProse, prose: chosen.prose, lang, cvDraft: archOrigCv, cvProse: chosen.stats?.cv });
+            if (!reorgV.pass) {
+              console.log(`  ⚠ 9.0 重組未過否決環（${reorgV.vetoes.map((v) => v.rule).join('、')}）→ 回退重組`);
+              chosen.paras = beforeParas; chosen.prose = beforeProse; chosen.score = beforeScore; chosen.stats = beforeStats;
+              archReorg = { ...archReorg, reverted: true, vetoes: reorgV.vetoes };
+            }
+            console.log(`  9.0 重組：${archReorg.moves}/${archReorg.pairs} 段對消除重複${archReorg.reverted ? '（已回退）' : ''}`);
           }
         } catch (e) { console.log(`  9.0 重組跳過：${e.message.slice(0, 60)}`); archReorg = { action: 'failed', error: e.message.slice(0, 80) }; }
-        ledger.append({ stage: 'reorg', before: beforeProse, after: chosen.prose, verdict: { pass: true, vetoes: [], dimensions: {} }, meta: archReorg });
+        const reorgClean = !(archReorg?.vetoes?.length);
+        ledger.append({ stage: 'reorg', before: beforeProse, after: chosen.prose, verdict: reorgClean ? { pass: true, vetoes: [], dimensions: {} } : { pass: false, vetoes: archReorg.vetoes, dimensions: {} }, meta: { ...archReorg, paras: { ...chosen.paras } } });
       }
       archFinal = evaluateText({ draft: originalProse, prose: chosen.prose, lang, nli: chosen.nli || null, cvDraft: archOrigCv, cvProse: chosen.stats?.cv });
       ledger.append({ stage: 'delivery', before: originalProse, after: chosen.prose, verdict: archFinal, meta: { chosen: chosen.crossover ? 'X' : chosen.id, route: route?.state } });
@@ -1373,7 +1383,16 @@ async function main() {
     let archSection = '';
     let diag90 = null;
     if (arch90) {
-      diag90 = diagnoseText(originalProse, lang);
+      // 9.0 L1 作者錨定：--seed 為 txt 時視為作者真實寫作樣本
+      let authorSampleText = null;
+      if (args.seed) {
+        try {
+          const sp = path.resolve(String(args.seed));
+          if (fs.existsSync(sp) && /\.txt$/i.test(sp)) authorSampleText = fs.readFileSync(sp, 'utf8');
+          else if (fs.existsSync(sp) && /\.json$/i.test(sp)) authorSampleText = JSON.parse(fs.readFileSync(sp, 'utf8')).text || null;
+        } catch { /* seed 讀取失敗不擋診斷 */ }
+      }
+      diag90 = diagnoseText(originalProse, lang, { authorSample: authorSampleText });
     }
     if (arch90) {
       report.arch90 = {
