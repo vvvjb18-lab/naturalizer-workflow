@@ -361,3 +361,61 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   await closeDetector();
   process.exit(0);
 }
+
+// ── 9.0 L2: repetition reorg (S3 route) ─────────────────────────────────────
+// The unit of repair is the argument, not the sentence (ROADMAP 方向1). For
+// adjacent paragraphs that overlap heavily (token jaccard ≥ 0.35), regenerate
+// the weaker one from its ORIGINAL (fact source) with a dedup instruction, so
+// each paragraph keeps only what is new. Acceptance: validateUnit facts hold,
+// NLI vs original no contradiction, new overlap with the neighbour < 0.35,
+// offline score no worse (+0.05 tolerance — the goal is dedup, not score).
+export const DEDUP_INSTR = 'Rewrite this paragraph keeping only the information that is new here; drop anything the neighbouring paragraph already covers. Vary the sentence structure so it does not mirror the neighbouring paragraph. Every fact, number and citation must survive unchanged.';
+
+export function findRepetitivePairs(paras, targetIdx, lang, threshold = 0.35, minWords = 30) {
+  const idxs = targetIdx.map(Number).filter((i) => wordCount(paras[i] || '', lang) >= minWords);
+  const pairs = [];
+  for (let k = 0; k + 1 < idxs.length; k++) {
+    const i = idxs[k], j = idxs[k + 1];
+    const jac = jaccard(tokenSet(paras[i] || '', lang), tokenSet(paras[j] || '', lang));
+    if (jac >= threshold) pairs.push({ i, j, jaccard: jac });
+  }
+  return pairs;
+}
+
+export async function repetitionReorg({ paras, originalsByPara, targetIdx, lang, maxRegens = 3, log = () => {} }) {
+  const pairs = findRepetitivePairs(paras, targetIdx, lang);
+  if (!pairs.length) return { action: 'none', pairs: 0, moves: 0, reverted: 0 };
+  log(`重複段對 ${pairs.length} 組（${pairs.map((p) => `p${p.i + 1}~p${p.j + 1} ${p.jaccard.toFixed(2)}`).join('、')}）`);
+  let moves = 0, reverted = 0;
+  for (const { i, j } of pairs.slice(0, maxRegens)) {
+    const [sa] = await scoreTexts([paras[i]]);
+    const [sb] = await scoreTexts([paras[j]]);
+    const worse = ((sb?.p_ai_gen ?? 1) > (sa?.p_ai_gen ?? 1)) ? j : i;
+    const neighbor = worse === i ? j : i;
+    const orig = originalsByPara[worse] || paras[worse];
+    const beforeGen = worse === i ? (sa?.p_ai_gen ?? 1) : (sb?.p_ai_gen ?? 1);
+    let done = false;
+    for (let attempt = 0; attempt < 2 && !done; attempt++) {
+      try {
+        const { cloaked, restore } = cloakNumbers(orig);
+        const out = restore(await completeUnit({ text: cloaked, sampling: { temperature: attempt === 0 ? 1.0 : 1.1, topP: 0.95 }, instruction: DEDUP_INSTR }));
+        const v = validateUnit(orig, out, lang);
+        if (!v.ok) { log(`  p${worse + 1} rejected (${v.reason})`); continue; }
+        const newJac = jaccard(tokenSet(out, lang), tokenSet(paras[neighbor] || '', lang));
+        if (newJac >= 0.35) { log(`  p${worse + 1} 仍與鄰段重複（${newJac.toFixed(2)}）`); continue; }
+        const [pair] = await nliPairs([[orig, out]]);
+        if (pair && pair.contradict > 0.5) { log(`  p${worse + 1} NLI 矛盾拒收（${pair.contradict.toFixed(2)}）`); continue; }
+        const [sc] = await scoreTexts([out]);
+        if ((sc?.p_ai_gen ?? 1) > beforeGen + 0.05) { log(`  p${worse + 1} 分數退化（${beforeGen.toFixed(2)}→${(sc?.p_ai_gen ?? 1).toFixed(2)}）`); continue; }
+        paras[worse] = out;
+        moves++;
+        done = true;
+        log(`  p${worse + 1}: 重複消除（jaccard → ${newJac.toFixed(2)}，gen ${beforeGen.toFixed(2)}→${(sc?.p_ai_gen ?? 1).toFixed(2)}）`);
+      } catch (e) {
+        log(`  p${worse + 1} failed: ${e.message.slice(0, 60)}`);
+      }
+    }
+    if (!done) reverted++;
+  }
+  return { action: moves ? 'applied' : 'no-op', pairs: pairs.length, moves, reverted };
+}

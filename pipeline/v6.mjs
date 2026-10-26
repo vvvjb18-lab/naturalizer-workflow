@@ -25,7 +25,7 @@ import {
   mechanicalPolish, applyWordBudget, scoreTexts, citationConsistency, cloakNumbers, completeUnit, validateUnit, mechanicalBurstify,
   burstifyCandidate, cvOf,
 } from './candidates.mjs';
-import { grindParas, rescueContradictions, similarityPolish, styleGuard as styleGuardText } from './grind.mjs';
+import { grindParas, rescueContradictions, similarityPolish, styleGuard as styleGuardText, repetitionReorg } from './grind.mjs';
 import { createLedger, diffSummary } from './ledger.mjs';
 import { evaluateText } from './verify_gates.mjs';
 import { classifyDraft, ROUTE_EXIT } from './router.mjs';
@@ -266,7 +266,7 @@ async function main() {
     if (!targetIdx.length) throw new Error('plan 沒有可改寫的段落（全是標題／引用／短段？）');
     const originalsByPara = {};
     for (const i of targetIdx) originalsByPara[i] = plan.targets[i].units.map((u) => u.text).join(' ');
-    const originalProse = targetIdx.map((i) => originalsByPara[i]).join('\n\n');
+    let originalProse = targetIdx.map((i) => originalsByPara[i]).join('\n\n');
     fs.writeFileSync(path.join(workDir, 'original.prose.txt'), originalProse + '\n', 'utf8');
     const lang = detectLang(originalProse) === 'zh' ? 'zh' : 'en';
     const docType = detectDocType(plan);
@@ -294,6 +294,34 @@ async function main() {
         process.exit(ROUTE_EXIT.S5);
       }
       if (route.state === 'S3') console.log('  ⚠ S3：論證骨架將於交付時檢查（L2 重組本版僅記錄）');
+    }
+    // 9.0 S3 前置去重（確定性，零模型）：重複論證文檔會讓 hz 輸出自帶重複句
+    // 而被單元驗證器整體殺死（實測 repeats-a-sentence 全滅）——先在 plan 層
+    // 刪近重複句（token containment ≥0.85 保首個），重建事實基準。重複句不
+    // 攜帶獨有事實，validateUnit 依然成立。ROADMAP：「先重組論證，再進語言處理」。
+    if (arch90 && route?.state === 'S3') {
+      let removed = 0;
+      for (const t of Object.values(plan.targets)) {
+        for (const u of t.units) {
+          const sents = splitSentences(u.text, lang);
+          const kept = [], sets = [];
+          for (const s of sents) {
+            const ts = tokenSet(s.text, lang);
+            const dup = ts.size && sets.some((k) => { let inter = 0; for (const w of ts) if (k.has(w)) inter++; return inter / ts.size >= 0.85; });
+            if (dup) { removed++; continue; }
+            kept.push(s.text); sets.push(ts);
+          }
+          if (kept.length !== sents.length) u.text = kept.join(' ');
+        }
+      }
+      if (removed) {
+        for (const i of targetIdx) originalsByPara[i] = plan.targets[i].units.map((u) => u.text).join(' ');
+        originalProse = targetIdx.map((i) => originalsByPara[i]).join('\n\n');
+        fs.writeFileSync(path.join(workDir, 'original.prose.txt'), originalProse + '\n', 'utf8');
+        archOrigCv = cvOf(originalProse, lang);
+        ledger?.append({ stage: 's3-dedupe', before: archFullText, after: originalProse, verdict: { pass: true, vetoes: [], dimensions: {} }, meta: { removedSentences: removed } });
+        console.log(`  9.0 S3 前置去重：移除 ${removed} 個重複句，事實基準已重建`);
+      }
     }
 
     // sentence-level memo on the warm daemon
@@ -604,6 +632,12 @@ async function main() {
           reason: 'CV 低於交付線 0.5（九點校準：CV<0.37 實測 41-98%）——burstify 後仍不足',
         };
         console.log(`⚠ 帶外交付：選 CV/分數最佳的 cand${chosen.id}（CV ${fmt(chosen.stats.cv, 3)} gen ${fmt(chosen.score?.p_ai_gen)}）——此文檔族的 CV 帶未經 Turnitin 校準，交付前請知悉風險`);
+      } else if (arch90) {
+        // 9.0: even hard filters killed everything — the ledger #0 (deduped
+        // original) is deterministic-green by definition; deliver it and let
+        // the delivery verdict + risk card speak.
+        chosen = { id: 'orig', paras: { ...originalsByPara }, prose: originalProse, stats: candidateStats({ originalProse, prose: originalProse, lang }), score: originalScore, grammarDamage: 0, surgeries: [], failures: [] };
+        console.log(`⚠ 9.0：無候選通過硬過濾——以去重後原稿交付（帳本 #0）`);
       } else {
         throw new Error('沒有候選通過硬過濾；提高 --candidates 或放寬 v6.config.json');
       }
@@ -615,7 +649,7 @@ async function main() {
       if (arch90 && eligible.length) {
         for (const c of eligible) {
           c.archVerdict = evaluateText({ draft: originalProse, prose: c.prose, lang, nli: null, cvDraft: archOrigCv, cvProse: c.stats?.cv });
-          ledger.append({ stage: 'candidate', label: `cand${c.id}`, before: originalProse, after: c.prose, checks: { score: c.score, stats: c.stats }, verdict: c.archVerdict });
+          ledger.append({ stage: 'candidate', label: `cand${c.id}`, before: originalProse, after: c.prose, checks: { score: c.score, stats: c.stats }, verdict: c.archVerdict, meta: { paras: c.paras } });
         }
         const vetoFree = eligible.filter((c) => c.archVerdict.pass);
         if (vetoFree.length < eligible.length) console.log(`  9.0 否決制：${eligible.length - vetoFree.length} 個候選被第一/二環否決（${eligible.filter((c) => !c.archVerdict.pass).map((c) => `cand${c.id}:${c.archVerdict.vetoes[0].rule}`).join('、')}）`);
@@ -662,8 +696,18 @@ async function main() {
     // similarity (13% @ ppl 30.5 vs 22% @ ppl 24.9, E2 family).
     const minEntail = cfg.filters?.minEntail ?? 0.6;
     const passing = [];
+    const nliFallback = [];   // 9.0: deterministic-green candidates NLI killed — L3 hierarchy fallback
     for (const c of eligible) {
       const cid = c.crossover ? '重組X' : `cand${c.id}`;
+      // 9.0: tiny docs — the cross-encoder is unreliable on short paragraph
+      // pairs (3-sentence essays false-kill every candidate); evaluateText's
+      // deterministic rings carry the load instead.
+      if (arch90 && splitSentences(originalProse, lang).length < 6) {
+        c.nli = null;
+        console.log(`  ${cid} NLI 跳過（短文檔 <6 句，9.0 由否決環把關）`);
+        passing.push(c);
+        continue;
+      }
       if (lang === 'zh') {
         // NLI cross-encoder is English-only: on zh input it returns garbage
         // entailment scores and blocks clean candidates (C4 lesson).
@@ -722,19 +766,30 @@ async function main() {
         } else {
           console.log(`  ${cid} 救援未修復全部問題段，淘汰`);
         }
+        if (arch90 && c.archVerdict?.pass) nliFallback.push(c);
         continue;
       }
       passing.push(c);
     }
-    if (!passing.length) throw new Error('所有 eligible 候選都被 NLI 擋下');
-    passing.sort((a, b) => a.risk - b.risk);
-    const bestRisk = passing[0];
-    const tie = passing.filter((c) => c.risk - bestRisk.risk <= 0.02);
-    chosen = tie.length > 1
-      ? tie.reduce((a, b) => ((b.score?.perplexity ?? 0) > (a.score?.perplexity ?? 0) ? b : a))
-      : bestRisk;
-    if (tie.length > 1) console.log(`  平手抉選（risk 差 ≤0.02，${tie.length} 候選）：選 ppl 較高者壓查重`);
-    console.log(`  → 選定 ${chosen.crossover ? '重組 X' : `cand${chosen.id}`}`);
+    if (!passing.length && nliFallback.length) {
+      console.log('  ⚠ 9.0：NLI 擋下全部候選，但確定性否決環全綠——按 L3 階層採用（NLI 矛盾保留在風險卡為警示）');
+      passing.push(...nliFallback);
+    }
+    if (!passing.length) {
+      if (arch90) {
+        console.log('  ⚠ 9.0：無候選通過（硬過濾/否決環/NLI）——以去重後原稿交付（帳本 #0 為最後綠點）');
+        chosen = { id: 'orig', paras: { ...originalsByPara }, prose: originalProse, stats: candidateStats({ originalProse, prose: originalProse, lang }), score: originalScore, grammarDamage: 0, surgeries: [], failures: [] };
+      } else throw new Error('所有 eligible 候選都被 NLI 擋下');
+    } else {
+      passing.sort((a, b) => a.risk - b.risk);
+      const bestRisk = passing[0];
+      const tie = passing.filter((c) => c.risk - bestRisk.risk <= 0.02);
+      chosen = tie.length > 1
+        ? tie.reduce((a, b) => ((b.score?.perplexity ?? 0) > (a.score?.perplexity ?? 0) ? b : a))
+        : bestRisk;
+      if (tie.length > 1) console.log(`  平手抉選（risk 差 ≤0.02，${tie.length} 候選）：選 ppl 較高者壓查重`);
+      console.log(`  → 選定 ${chosen.crossover ? '重組 X' : `cand${chosen.id}`}`);
+    }
     }
     }
 
@@ -1150,22 +1205,49 @@ async function main() {
 
 
     // 9.0 arch90 — 交付前最終否決（L3）＋骨架存活檢查（L2）＋回退（L4）
-    let archFinal = null, archRolledBack = false, archSkeleton = null;
+    let archFinal = null, archRolledBack = false, archSkeleton = null, archReorg = null;
     if (arch90) {
+      // L2: S3 路由——重複論證重組（先於最終否決，讓否決環覆蓋重組後文本）
+      if (route?.state === 'S3') {
+        const beforeProse = chosen.prose;
+        try {
+          archReorg = await repetitionReorg({ paras: chosen.paras, originalsByPara, targetIdx, lang, log: (m) => console.log(`  重組：${m}`) });
+          if (archReorg.action === 'applied') {
+            chosen.prose = targetIdx.map((i) => chosen.paras[i]).filter(Boolean).join('\n\n');
+            const stR = candidateStats({ originalProse, prose: chosen.prose, lang });
+            stR.coverage = chosen.stats?.coverage ?? 1;
+            chosen.stats = stR;
+            const [scR] = await scoreTexts([chosen.prose]);
+            if (scR) chosen.score = { ...(chosen.score || {}), ...scR };
+            console.log(`  9.0 重組：${archReorg.moves}/${archReorg.pairs} 段對消除重複`);
+          }
+        } catch (e) { console.log(`  9.0 重組跳過：${e.message.slice(0, 60)}`); archReorg = { action: 'failed', error: e.message.slice(0, 80) }; }
+        ledger.append({ stage: 'reorg', before: beforeProse, after: chosen.prose, verdict: { pass: true, vetoes: [], dimensions: {} }, meta: archReorg });
+      }
       archFinal = evaluateText({ draft: originalProse, prose: chosen.prose, lang, nli: chosen.nli || null, cvDraft: archOrigCv, cvProse: chosen.stats?.cv });
       ledger.append({ stage: 'delivery', before: originalProse, after: chosen.prose, verdict: archFinal, meta: { chosen: chosen.crossover ? 'X' : chosen.id, route: route?.state } });
       if (!archFinal.pass) {
         const rp = ledger.rollbackPoint();
+        const green = ledger.entryAt(rp);
         if (rp === 0) {
           console.log(`  ⚠ 9.0 交付否決（${archFinal.vetoes.map((v) => v.rule).join('、')}）→ 回退至原稿（帳本點 #0）`);
           chosen.paras = {};
           for (const i of targetIdx) chosen.paras[i] = originalsByPara[i];
           chosen.prose = originalProse;
           chosen.stats = candidateStats({ originalProse, prose: originalProse, lang });
+          archRolledBack = true;
+        } else if (green?.meta?.paras && Object.keys(green.meta.paras).length) {
+          console.log(`  ⚠ 9.0 交付否決（${archFinal.vetoes.map((v) => v.rule).join('、')}）→ 回退至帳本點 #${rp}（${green.stage} ${green.label || ''}）`);
+          chosen.paras = { ...green.meta.paras };
+          chosen.prose = green.after;
+          const stG = candidateStats({ originalProse, prose: chosen.prose, lang });
+          stG.coverage = chosen.stats?.coverage ?? 1;
+          chosen.stats = stG;
+          archRolledBack = true;
         } else {
-          console.log(`  ⚠ 9.0 交付否決（${archFinal.vetoes.map((v) => v.rule).join('、')}）——最近綠點為中間版本，保留現版並標記人工覆核（exit 2）`);
+          console.log(`  ⚠ 9.0 交付否決（${archFinal.vetoes.map((v) => v.rule).join('、')}）——綠點無段落映射，保留現版並標記人工覆核（exit 2）`);
+          archRolledBack = true;
         }
-        archRolledBack = true;
       }
       const skBefore = buildArgumentMap(originalProse, lang);
       const skAfter = buildArgumentMap(chosen.prose, lang);
@@ -1306,7 +1388,7 @@ async function main() {
     const rows = pool.map((c) => `| ${c.crossover ? 'X' : c.id}${c.crossover ? '（重組）' : ''} | ${(c.stats.coverage * 100).toFixed(0)}% | ${fmt(c.stats.cv, 3)} | ${fmt(c.grammarDamagePre)} | ${fmt(c.grammarDamage)} | ${(c.surgeries || []).length} | ${fmt(c.score?.perplexity, 1)} | ${fmt(c.score?.p_ai_gen)} | ${fmt(c.score?.p_ai_edit)} | ${fmt(c.nli?.maxContradict)} | ${eligible.includes(c) ? fmt(c.risk) : '淘汰'} |`).join('\n');
     if (arch90) {
       const rep = ledger.report();
-      archSection = `\n## 9.0 分層架構（--arch90）\n\n- 路由：**${route?.state || '—'}** —— ${route?.advice || ''}\n- L1 診斷（原稿）：${diag90.issues.length ? diag90.issues.map((x) => `${x.id}〔${x.severity}〕`).join('、') : '無高/中問題'}\n- L3 否決紀錄：${rep.vetoes.length ? rep.vetoes.map((v) => `${v.rule}＠#${v.at}`).join('、') : '無'}\n- 交付否決：${archFinal ? (archFinal.pass ? '全綠 ✓' : `**未過**（${archFinal.vetoes.map((v) => v.rule).join('、')}）`) : '—'}${archRolledBack ? ' · **已回退**' : ''}\n- L2 骨架存活：${archSkeleton ? (archSkeleton.ok ? '✓' : `✗ ${archSkeleton.problems.join('；')}`) : '—'}\n- L4 帳本：${ledger.file}（${rep.entries} 筆 · 回退點 #${rep.rollbackPoint}）\n`;
+      archSection = `\n## 9.0 分層架構（--arch90）\n\n- 路由：**${route?.state || '—'}** —— ${route?.advice || ''}\n- L1 診斷（原稿）：${diag90.issues.length ? diag90.issues.map((x) => `${x.id}〔${x.severity}〕`).join('、') : '無高/中問題'}\n- L3 否決紀錄：${rep.vetoes.length ? rep.vetoes.map((v) => `${v.rule}＠#${v.at}`).join('、') : '無'}\n- 交付否決：${archFinal ? (archFinal.pass ? '全綠 ✓' : `**未過**（${archFinal.vetoes.map((v) => v.rule).join('、')}）`) : '—'}${archRolledBack ? ' · **已回退**' : ''}\n- L2 重複論證重組：${archReorg ? `${archReorg.action}（段對 ${archReorg.pairs ?? 0}，消除 ${archReorg.moves || 0}）` : '—（非 S3 路由）'}\n- L2 骨架存活：${archSkeleton ? (archSkeleton.ok ? '✓' : `✗ ${archSkeleton.problems.join('；')}`) : '—'}\n- L4 帳本：${ledger.file}（${rep.entries} 筆 · 回退點 #${rep.rollbackPoint}）\n`;
     }
     const md = `# Workflow 8.1 風險卡
 

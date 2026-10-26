@@ -10,6 +10,7 @@ import { evaluateText, hedgeCount } from '../../pipeline/verify_gates.mjs';
 import { classifyDraft, unsourcedStatRatio } from '../../pipeline/router.mjs';
 import { diagnoseText } from '../../pipeline/diagnostics.mjs';
 import { buildArgumentMap, skeletonSurvived } from '../../pipeline/argument_map.mjs';
+import { findRepetitivePairs, DEDUP_INSTR } from '../../pipeline/grind.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-'));
 
@@ -176,4 +177,43 @@ test('skeletonSurvived detects evidence loss after a bad rewrite', () => {
   assert.ok(r.problems.some((p) => /證據句/.test(p)));
   const fine = skeletonSurvived(before, buildArgumentMap(ARG + ' Additional context was added here for length.', 'en'));
   assert.equal(fine.ok, true);
+});
+
+// ── 9.0 第二輪：重複段對 / 帳本 entryAt / 代名詞 one 回歸 ────────────────────
+
+test('findRepetitivePairs detects overlapping adjacent paragraphs only', () => {
+  const dup = 'The library chatbot answers common questions and searches the catalogue for students and staff members every single day of the week. It also handles hold requests and renewal reminders reliably. Students appreciate the quick response times during busy exam periods.';
+  const other = 'Privacy remains a serious concern for any campus deployment of conversational software today. The system must log every query and apply retention limits with genuine staff oversight. Committees should review the data policy each term.';
+  const paras = [dup, dup, other];
+  const pairs = findRepetitivePairs(paras, [0, 1, 2], 'en');
+  assert.equal(pairs.length, 1);
+  assert.deepEqual([pairs[0].i, pairs[0].j], [0, 1]);
+  const distinct = findRepetitivePairs([dup, other, dup + ' The budget covers licences.'], [0, 1, 2], 'en');
+  assert.equal(distinct.length, 0);
+  assert.ok(DEDUP_INSTR.length > 40);
+});
+
+test('ledger entryAt exposes stored paras for intermediate rollback', () => {
+  const dir = tmp();
+  try {
+    const led = createLedger(dir, { docId: 't' });
+    led.append({ stage: 'original', before: 'orig', after: 'orig', verdict: { pass: true } });
+    led.append({ stage: 'candidate', label: 'cand1', before: 'orig', after: 'cand text', verdict: { pass: true }, meta: { paras: { 0: 'cand text' } } });
+    led.append({ stage: 'delivery', before: 'orig', after: 'bad delivery', verdict: { pass: false, vetoes: [{ ring: 1, rule: 'x' }] } });
+    const rp = led.rollbackPoint();
+    assert.equal(rp, 1);
+    const green = led.entryAt(rp);
+    assert.equal(green.meta.paras[0], 'cand text');
+    assert.equal(led.textAt(rp), 'cand text');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('pronoun "one" in rewrite no longer triggers inventedNumbers (9.0 scrub)', () => {
+  const draft = 'Stakeholders must navigate these adoption barriers carefully across diverse educational environments and funding models.';
+  const prose = 'Stakeholders must navigate these adoption barriers carefully. One of the great things about this approach is its flexibility across environments.';
+  const v = evaluateText({ draft, prose, lang: 'en' });
+  assert.ok(!v.vetoes.some((x) => x.rule === 'inventedNumbers'), JSON.stringify(v.vetoes));
+  // 量詞用法仍受保護：one percent 是事實數字
+  const v2 = evaluateText({ draft, prose: prose.replace('One of', 'One percent of') + ' Adoption rose by one percent.', lang: 'en' });
+  assert.ok(v2.vetoes.some((x) => x.rule === 'inventedNumbers'), 'real quantifier one should be caught');
 });

@@ -78,6 +78,9 @@ export function createLedger(workDir, { docId = '' } = {}) {
       if (!e) return null;
       return id === 0 ? (e.after ?? e.before) : e.after;
     },
+    entryAt(id) {
+      return entries[id] || null;
+    },
     /** 最後一個「三環全綠」的版本；沒有則回 0（原稿）。 */
     rollbackPoint() {
       for (let i = entries.length - 1; i >= 0; i--) {

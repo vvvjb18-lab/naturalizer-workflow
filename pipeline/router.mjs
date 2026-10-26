@@ -63,9 +63,9 @@ export function classifyDraft({ text, gen = null, cv = null, lang = 'en' }) {
   if (gen != null && gen >= 0.65 && signals.firstPersonPer1k < 1 && signals.citations === 0) {
     return { state: 'S4', signals, advice: '原稿為大量 AI 生成且缺作者自己的分析（gen≥0.65、無第一人稱、無引用）：需要作者補充理解、觀點與證據後再處理。', exitCode: ROUTE_EXIT.S4 };
   }
-  // S3：內容重複／論證薄弱——可處理，但警告將先重組論證。
+  // S3：內容重複／論證薄弱——先重組論證（確定性去重前置＋交付時段級重組），再語言處理。
   if (signals.repetitionPairs >= 2) {
-    return { state: 'S3', signals, advice: '相鄰段落高度重複：先重組論證再進語言處理（目前版本僅警告，骨架重組在 L2）。' };
+    return { state: 'S3', signals, advice: '相鄰段落高度重複：先去重再處理（S3 前置去重＋交付時論證重組），語言處理其後。' };
   }
   // S1：論證完整＋語言可信——保守編輯。
   if (gen != null && gen <= 0.40 && signals.informal === 0 && (cv == null || cv >= 0.4)) {
