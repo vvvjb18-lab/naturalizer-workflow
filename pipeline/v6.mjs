@@ -67,6 +67,8 @@ const HELP = `v6.mjs — Workflow 8.0（選擇式管線：早停 × 手術 × �
   --mcts-generator G   app（12B，預設）｜stub（無 LLM，測試用）
   --mcts-unit U        paragraph（預設）｜sentence（對齊 8.4 句級研磨）
   --zmq                8.17 啟用 ZMQ ROUTER/DEALER 異步評分橋
+  --shred              8.18 前置粉碎：先用 shredder.py 打散句法（事實守衛）
+  --shred-rate R       粉碎觸發率（預設 0.5）
 `;
 
 function parseArgs(argv) {
@@ -127,6 +129,7 @@ async function main() {
   }
   // 8.17 opt-in modes
   const mctsMode = !!args.k.mcts;
+  const useShred = !!args.k.shred;
   const useZmq = !!args.k.zmq;
   const useCrossover = cfg.crossover !== false;
   const useAdaptive = cfg.adaptive !== false;
@@ -223,6 +226,35 @@ async function main() {
       }
       if (droppedTitles.length) console.log(`  標題保護：${droppedTitles.map((i) => `p${i}`).join(',')} 不改寫`);
     }
+    // 8.18: --shred — deterministic dependency-tree perturbation as a PRE step.
+    // Runs on plan units (one Python process for the whole document).
+    let shredStats = null;
+    if (useShred) {
+      const units = [];
+      for (const [pi, tgt] of Object.entries(plan.targets)) {
+        for (const u of tgt.units) units.push({ id: `${pi}:${u.id}`, text: u.text });
+      }
+      const inPath = path.join(workDir, 'shred-in.json');
+      const outPath = path.join(workDir, 'shred-out.json');
+      fs.writeFileSync(inPath, JSON.stringify({ units, rate: Number(args.k['shred-rate'] ?? 0.5) }), 'utf8');
+      console.log('=== 8.18 前置粉碎（shredder.py，事實守衛開啟）===');
+      const r = spawnSync('python', [path.join(HERE, 'shred_batch.py'), inPath, outPath,
+        '--rate', String(args.k['shred-rate'] ?? 0.5)], { encoding: 'utf8', timeout: 300000 });
+      if (r.status !== 0) throw new Error(`shred_batch failed: ${String(r.stderr).slice(0, 300)}`);
+      const sd = JSON.parse(fs.readFileSync(outPath, 'utf8'));
+      const byId = new Map(sd.units.map((u) => [u.id, u.text]));
+      for (const [pi, tgt] of Object.entries(plan.targets)) {
+        for (const u of tgt.units) {
+          const v = byId.get(`${pi}:${u.id}`);
+          if (typeof v === 'string' && v.trim()) u.text = v;
+        }
+      }
+      shredStats = { ...sd.stats, fact_loss: sd.fact_loss };
+      console.log(`  粉碎完成：${sd.stats.ops_total} ops（voice ${sd.stats.ops.voice}／split ${sd.stats.ops.split}／`
+        + `merge ${sd.stats.ops.merge}／reorder ${sd.stats.ops.reorder}）· CV ${sd.stats.cv_before} → ${sd.stats.cv_after}`
+        + ` · 事實丟失 ${sd.fact_loss}`);
+    }
+
     const targetIdx = Object.keys(plan.targets);
     if (!targetIdx.length) throw new Error('plan 沒有可改寫的段落（全是標題／引用／短段？）');
     const originalsByPara = {};
@@ -1141,6 +1173,7 @@ async function main() {
       grind: grindInfo,
       styleGuide: styleMeta,
       mcts: mctsMode ? chosen.mcts : null,
+      shred: shredStats,
       similarityPolish: simInfo,
       citationCheck: citeCheck ? { checked: citeCheck.checked, references: citeCheck.references, mismatches: citeCheck.mismatches, fixes: citeCheck.fixes } : null,
       qualitySurgery: qFix,
