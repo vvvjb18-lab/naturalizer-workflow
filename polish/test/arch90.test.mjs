@@ -304,8 +304,7 @@ test('anchor gate: B+ quality text passes all three rubric dimensions', () => {
   const text = body + '\n\nReferences\n\nBandy, L. (2020). Sugar reductions. BMC Medicine, 18(1).\nColchero, M. (2016). Beverage purchases. Health Affairs, 36(3).\nFalbe, J. (2016). Berkeley excise tax. AJPH, 106(10).';
   // 測試用降門檻剖面（正文 100 詞起）——門檻本身由 fail-path 測試覆蓋
   const P = JSON.parse(JSON.stringify(ANCHOR));
-  P.bplusGate.content.minWords = 100;
-  P.profile.words = [100, 750];
+  P.assignmentDefaults.minWords = 100;
   const g = gradeAgainstAnchor({ text, body, profile: P });
   assert.equal(g.grade, 'B+');
   assert.equal(g.pass, true);
@@ -313,12 +312,14 @@ test('anchor gate: B+ quality text passes all three rubric dimensions', () => {
   assert.ok(!g.fails.length, JSON.stringify(g.fails));
 });
 
-test('anchor gate: colloquial short text fails with FAIL items', () => {
+test('anchor gate: colloquial short text fails on universal invariants only', () => {
   const body = 'So basically the tax is a big deal. You can see it works everywhere. It is kinda obvious really.';
   const g = gradeAgainstAnchor({ text: body, body, profile: ANCHOR });
   assert.equal(g.grade, 'BELOW-B+');
-  assert.ok(g.fails.some((x) => x.rule === 'wordCount'), JSON.stringify(g.fails));
-  assert.ok(g.fails.some((x) => x.rule === 'paragraphs'));
-  assert.ok(g.fails.some((x) => x.rule === 'colloquial'));
+  // 作業參數（字數/段數）降為 WARN——不同作業不同要求（用戶裁決）
+  assert.ok(g.warns.some((x) => x.rule === 'wordCount'), JSON.stringify(g.fails.concat(g.warns)));
+  assert.ok(g.warns.some((x) => x.rule === 'paragraphs'));
+  // 通用學術不變量仍是 FAIL
+  assert.ok(g.fails.some((x) => x.rule === 'colloquial'), JSON.stringify(g.fails));
   assert.ok(g.fails.some((x) => x.rule === 'secondPerson'));
 });

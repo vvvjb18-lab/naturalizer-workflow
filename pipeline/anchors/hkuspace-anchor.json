@@ -1,42 +1,133 @@
 {
-  "name": "hkuspace-ccen4003",
-  "description": "HKU SPACE CCEN4003 Introduction to Academic English — 真人 A 級樣本錨點（Essay plan A／iae Essay A／Research Essay A+／官方 Expository Sample）。交付目標：B+ 以上（rubric 定義見 anchors/rubric-*.txt）。",
-  "source": "E:\\hkuspace\\ccen4003 source",
-  "profile": {
-    "words": [600, 750],
-    "sentenceCv": [0.35, 0.65],
-    "meanSentenceLen": [18, 31],
-    "commaPer1k": [55, 95],
-    "copulaPer1k": [7, 26],
-    "firstPersonPer1k": [0, 1.5],
-    "citationsPer1k": [12, 30],
-    "narrativeCitationsMin": 2
-  },
-  "bplusGate": {
-    "content": {
-      "minWords": 600,
-      "minParagraphs": 4,
-      "rolesComplete": true,
-      "maxUnsourcedStatRatio": 0.6
-    },
-    "language": {
-      "maxColloquialDelta": 0,
-      "maxSecondPerson": 0,
-      "maxContractions": 0,
-      "registerFirst": "正式書面語（rubric Language 帶：偶發錯誤不妨礙溝通＝CoLA 傷率帶 0-0.2 可容）"
-    },
-    "referencing": {
-      "minSources": 3,
-      "referencesSection": true,
-      "inTextMatchList": true,
-      "alphabeticalList": true,
-      "narrativeReportingVerbMin": 2
-    }
-  },
-  "lessons": [
-    "A 級錨點 sentenceCv 0.375-0.631：管線 CV 帶 0.45-0.65 落於 A 級分佈內",
-    "A 級錨點 copula 7.4-25.9/千詞：hugo 的 copula ≤6 閘門對本課程錨點反向（族軸定理第三次實證）",
-    "A 級錨點逗號密度 68-84/千詞：逗號鏈是人類風格——壓平逗號反而是 AI 訊號",
-    "引用密度 17-24/千詞是課程規範；B+ 門檻設 ≥12/千詞"
+ "name": "hkuspace-ccen4003-merged",
+ "description": "HKU SPACE 學術寫作真人 A 級錨點（7 份：Essay plan A／iae Essay A／Research Essay A+／官方範文／IAE Asm2 三篇，含 29/30 A+）。交付目標 B+。",
+ "source": "E:\\hkuspace\\ccen4003 source",
+ "profile": {
+  "words": [
+   683,
+   1713
+  ],
+  "sentenceCv": [
+   0.262,
+   0.941
+  ],
+  "meanSentenceLen": [
+   18.3,
+   28.4
+  ],
+  "commaPer1k": [
+   48.5,
+   77.6
+  ],
+  "copulaPer1k": [
+   5.3,
+   42.5
+  ],
+  "firstPersonPer1k": [
+   0.0,
+   2.9
+  ],
+  "citationsPer1k": [
+   10.5,
+   16.3
   ]
+ },
+ "lessons": [
+  "A 級錨點 sentenceCv 0.375-0.631：管線 CV 帶 0.45-0.65 落於 A 級分佈內",
+  "A 級錨點 copula 7.4-25.9/千詞：hugo 的 copula ≤6 閘門對本課程錨點反向（族軸定理第三次實證）",
+  "A 級錨點逗號密度 68-84/千詞：逗號鏈是人類風格——壓平逗號反而是 AI 訊號",
+  "引用密度 17-24/千詞是課程規範；B+ 門檻設 ≥12/千詞",
+  "A 級樣本字數橫跨 617-1071：字數底線是作業參數不是品質參數（用戶裁決 2026-10-27）；rubrics 僅 CCEN4003 參考，通用門只保留學術不變量（語域/引用匹配/來源數）"
+ ],
+ "samples": {
+  "essayplan-A": {
+   "words": 983,
+   "sentenceCv": 0.501,
+   "meanSentenceLen": 28.2,
+   "commaPer1k": 56.0,
+   "copulaPer1k": 12.2,
+   "firstPersonPer1k": 1.0,
+   "citationsPer1k": 16.3
+  },
+  "iae-essay-A": {
+   "words": 760,
+   "sentenceCv": 0.462,
+   "meanSentenceLen": 28.4,
+   "commaPer1k": 77.6,
+   "copulaPer1k": 9.2,
+   "firstPersonPer1k": 0.0,
+   "citationsPer1k": 13.2
+  },
+  "research-essay-Aplus": {
+   "words": 726,
+   "sentenceCv": 0.511,
+   "meanSentenceLen": 20.1,
+   "commaPer1k": 68.9,
+   "copulaPer1k": 23.4,
+   "firstPersonPer1k": 1.4,
+   "citationsPer1k": 12.4
+  },
+  "expository-sample": {
+   "words": 760,
+   "sentenceCv": 0.515,
+   "meanSentenceLen": 21.9,
+   "commaPer1k": 72.4,
+   "copulaPer1k": 19.7,
+   "firstPersonPer1k": 0.0,
+   "citationsPer1k": 10.5
+  },
+  "iae2-essay-Aplus": {
+   "words": 1713,
+   "sentenceCv": 0.941,
+   "meanSentenceLen": 18.3,
+   "commaPer1k": 48.5,
+   "copulaPer1k": 5.3,
+   "firstPersonPer1k": 0.6,
+   "citationsPer1k": 10.5
+  },
+  "iae2-essay-A": {
+   "words": 683,
+   "sentenceCv": 0.262,
+   "meanSentenceLen": 19.7,
+   "commaPer1k": 55.6,
+   "copulaPer1k": 42.5,
+   "firstPersonPer1k": 2.9,
+   "citationsPer1k": 14.6
+  },
+  "iae2-essay-A2": {
+   "words": 741,
+   "sentenceCv": 0.438,
+   "meanSentenceLen": 20.2,
+   "commaPer1k": 59.4,
+   "copulaPer1k": 20.2,
+   "firstPersonPer1k": 0.0,
+   "citationsPer1k": 12.1
+  }
+ },
+ "note": "rubric-*.txt 是 CCEN4003 特定作業的評分參考，不是通用標準——字數/段數/來源數等作業參數按訂單配置。",
+ "universalGate": {
+  "content": {
+   "rolesComplete": true,
+   "maxUnsourcedStatRatio": 0.6
+  },
+  "language": {
+   "maxColloquialDelta": 0,
+   "maxSecondPerson": 0,
+   "maxContractions": 0,
+   "registerFirst": "正式書面語（rubric Language 帶：偶發錯誤不妨礙溝通＝CoLA 傷率帶 0-0.2 可容）"
+  },
+  "referencing": {
+   "minSources": 3,
+   "referencesSection": true,
+   "inTextMatchList": true,
+   "alphabeticalList": true,
+   "narrativeReportingVerbMin": 2
+  }
+ },
+ "assignmentDefaults": {
+  "minWords": 600,
+  "minParagraphs": 4,
+  "minSources": 3,
+  "note": "作業參數（WARN 級，訂單可覆寫）——不同作業字數/格式不同，不作硬門"
+ }
 }

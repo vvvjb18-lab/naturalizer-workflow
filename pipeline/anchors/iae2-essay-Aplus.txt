@@ -1,0 +1,126 @@
+
+  
+
+
+
+
+
+ An online survey distributed to 330 Bahraini people using Google Forms indicated that almost 60% of them agreed social media has a far-reaching influence on English language learning (Diana, 2020). Looking back to the 1960s and 1970s in English learning classrooms, conventional learning equipment, such as speakers and microphones, was widely used by teachers with a central monitoring system to supervise students’ English learning, which demonstrates the correlation between technology and English learning (Singhal, 1997 as cited in Nomass, 2013). Although this technique explicitly connects education and technology, it lacks opportunities for interaction between teachers and students. However, flourishing technology has driven the appearance of social media that provides a communication platform for learning but has resulted in a new mode of communication that changes the original grammar rules. This essay, therefore, examines the technology used in English spelling and grammar, focusing on three effects, including making the learning process to be more entertaining, improving English writing quality, and leading to people forgetting grammar rules.
+
+
+          Firstly, grammar and spelling technology offers English learners an interesting learning process. According to Chhabra (2012), electronic learning tools are potentially transformative for engaging students’ learning environments because they offer interactivity functions within the classroom. The author includes an example of an interactive whiteboard that integrates images and word processing in a learner-centered approach to guide students’ English grammar and spelling interactively. Using the pictogram teaching method, students can not only guess the English words associated with the pictures drawn on the board, but also produce the spelling of synonyms and antonyms for the graphics, which fosters engagement and communication between students and teachers. Additionally, Nomass (2013) stated that reading-based computer programs enhance learners’ enthusiasm for English learning by simplifying text with complex vocabulary into simple words. Hence, learners who initially struggle to understand the text can comprehend it through systematic changes, increasing their visual interaction with the text and improving vocabulary recognition, thereby making the learning process to be more entertaining.
+
+
+
+            Besides stimulating learners’ learning processes, grammar and spelling technology ameliorate students’ writing quality. Fitria (2021) explained that automated suggestions provided by artificial intelligence (AI) English learning tools have the capability to improve English writing quality as they are familiar with the English language by analyzing an array of grammatical structures, individual phrases, and even entire texts inserted by human researchers. The author also mentioned that researchers need to input error data that is naturally written by humans to help the AI algorithm recognize it. AI, therefore, notifies users of sentences with errors and offers users customized explanations with grammar, spelling, and sentence improvements. According to research conducted by Neill and Russell (2019) on testing CQUniversity students using Grammarly, an AI English learning tool, there was a noticeable improvement in grammatical and written accuracy in their essays due to the feedback. As a result, the suggestions enhanced the quality of their essays, which led to improved grades. Thus, AI learning tools strengthen writing quality.
+
+
+Finally, technology makes people forget traditional grammar rules. Laila and Abbasi (2021) addressed that addiction to online activities poses a low level of perfection in writing grammatically correct sentences. For example, text-speak, which is a short-term dialect created by social media for rapid communication, such as "wud" for "would", violates the standard grammar rules because text-speak is a shortened, informal version of the English written language with misspelled words. Akbarov and Tankosić (2016) also pointed out that repetitive use of text-speak triggers a predicament in learning the accurate practice of vocabulary and grammar in communication, as text-speak is considered a rebellion against language rules. Worse still, it obscures the difference between formal and informal writing (Strain-Moritz, 2016). Students who frequently use informal language reported difficulty recalling grammatically correct sentences, which failed to apply formal language in academic writing (Adams, 2007 as cited in Fitria, 2021). Overall, the frequent adoption of text-speak constitutes the reason for forgetting conventional grammar rules.
+
+         
+The essay has outlined both the positive and negative effects of grammar and spelling technology. Regarding the positive effects, it renders English learners a relaxing learning environment because of its multifunctionality. Meanwhile, technology helps students improve
+their writing quality with tailor-made feedback. Nevertheless, the routine use of non-regular communication on online technology degrades the mindset of recalling ordinary English rules. All in all, this technology plays a vital role in learning since it is found throughout the world. In terms of the range of choices, however, selectors should be cautious to avoid falling into technological pitfalls.
+
+
+
+References:
+
+Akbarov, A. & Tankosić, A. (2016). Impact of Social Networks and Technology on English Language Learners. Journal of Linguistic Intercultural Education, 9(3), 7–28. https://doi.org/10.29302/jolie.2016.9.3.1
+
+Al Jahromi, D. (2020). A QUANTITATIVE STUDY OF THE PERCEIVED IMPACT OF SOCIAL MEDIA NETWORKS ON BAHRAINI USERS’ ENGLISH LANGUAGE LEARNING. Teaching English with Technology, 20(4), 23–40. https://files.eric.ed.gov/fulltext/EJ1271906.pdf
+
+
+
+Al-Sharqi, L., & Abbasi, I. S. (2020). The Influence of Technology on English Language and Literature. English Language Teaching, 13(7), 1-7. https://doi.org/10.5539/elt.v13n7p1
+
+
+
+Chhabra, P. (2012). Use of E-Learning tools in teaching English. International Journal of Computing & Business Research, 3, 2229-6166.
+https://www.researchmanuscripts.com/isociety2012/9.pdf
+
+
+Fitria, T. N. (2021). Grammarly as AI-powered English writing assistant: Students’ alternative for English writing. Metathesis: Journal of English Language, Literature, and Teaching, 5(1), 65.
+https://doi.org/10.31002/metathesis.v5i1.3519
+
+Nomass, B. B. (2013). The impact of using technology in teaching English as a second language. English language and literature studies, 3(1), 111.
+https://www.ccsenet.org/journal/index.php/ells/article/view/25002
+
+
+
+ONeill, R., & Russell, A. (2019). Stop! Grammar time: University students’ perceptions of the automated feedback program Grammarly. Australasian Journal of Educational Technology, 35(1).
+https://doi.org/10.14742/ajet.3795
+
+
+Strain-Moritz, T. E. (2016). Perceptions of Technology Use and Its Effects on Student Writing.
+https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer= HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds" HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer= HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"& HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"httpsredir=1 HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"& HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"article=1014 HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"& HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"context=ed_etds" HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"& HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds" HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer= HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"& HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"httpsredir=1 HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"& HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"article=1014 HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"& HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"context=ed_etds" HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"httpsredir=1 HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds" HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer= HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"& HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"httpsredir=1 HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"& HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"article=1014 HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"& HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"context=ed_etds" HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"& HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds" HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer= HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"& HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"httpsredir=1 HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"& HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"article=1014 HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"& HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"context=ed_etds" HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"article=1014 HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds" HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer= HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"& HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"httpsredir=1 HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"& HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"article=1014 HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"& HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"context=ed_etds" HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"& HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds" HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer= HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"& HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"httpsredir=1 HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"& HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"article=1014 HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"& HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"context=ed_etds" HYPERLINK "https://repository.stcloudstate.edu/cgi/viewcontent.cgi?referer=&httpsredir=1&article=1014&context=ed_etds"context=ed_etds
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
