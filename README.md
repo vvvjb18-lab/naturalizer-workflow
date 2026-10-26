@@ -2,7 +2,7 @@
 
 本地化學術文本「去 AI 味」處理管線（Humanizer 12B GGUF ＋ 學術修復層），目標：低 Turnitin AI 偵測（<20%）＋ 可交付品質。
 
-**目前版本：7.5**（數字斗篷 Number Cloak ＋ 段級研磨 Grind ＋ LT 安全修復層）
+**目前版本：8.18**（選擇式管線＋NLI 定向救援＋自動段級研磨＋查重打磨＋字數預算＋引用一致性＋二級品質手術＋機械節奏手術＋接單預檢／best-of-N 編排＋MCTS/風格引導 opt-in；完整沿革見 `docs/WORKFLOW.md` 附錄）
 
 ## 快速部署（Windows）
 
@@ -25,12 +25,12 @@ scripts\start-all.cmd    # 啟動 WebUI → http://127.0.0.1:8790
 ## 倉庫結構
 
 ```
-pipeline/   主鏈與候選生成（v6.mjs、candidates.mjs、grind.mjs…）＋ samples
-polish/     LT 修復層、detector daemon/bridge（lt_fix.py、detector_daemon.py）
+pipeline/   主鏈與候選生成（v6.mjs、candidates.mjs、grind.mjs、assault.mjs、precheck.mjs、docx_bridge.py…）＋ canary 金絲雀 ＋ samples
+polish/     修復層（polish.mjs + src/）、LT 安全修復（lt_fix.py）、detector daemon/bridge、skills 合約、test/（43 測試）
 webui/      本地 Web 介面（server.mjs → 127.0.0.1:8790）
 scripts/    一鍵部署（setup.bat、start-all.cmd）
 docs/       WORKFLOW.md 完整版更日誌
-evidence/   實測證據包（E2-grind：0% AI／13%／0 flags）
+evidence/   實測證據包（E2-grind 全套；turnitin-reports/ H2/H4 原件）＋ pipeline/v6-test/calibration.json 活版校準集
 ```
 
 ## 核心組件
@@ -43,17 +43,22 @@ evidence/   實測證據包（E2-grind：0% AI／13%／0 flags）
 | `polish/lt_fix.py` | LanguageTool 6.8 安全類別修復（引用／專有名詞／References 保護，en-GB） |
 | 離線評分三件套 | tmr-ai-text-detector (p_ai_gen)／EditLens (p_ai_edit)／GPT-2 perplexity，CV 節奏帶 0.45–0.65 |
 
-## 校準結論（15 點／15 課）
+## 校準結論（21 點／21 課，`pipeline/v6-test/calibration.json`）
 
-- gen ≤ 0.05 → Turnitin <20%（三例實測：H2 0.031／H4 0.048／E2-grind 0.030）
+- gen ≤ 0.05 → Turnitin <20%（三例實測：H2 0.031／H4 0.048／E2-grind 0.030；一鍵 8.1/8.2 復現 0.02/0.034 → 0%）
 - API 潤飾每級 +10–15% Turnitin；gen 0.24+ 一律不予送檢
 - 個人敘事（第一人稱）＝綠區；正式第三人稱（argumentative/report）＝紅區，需 grind 破境
+- 雙特徵交付規則（9/9 吻合）：CV ≥ 0.54 → 全過；CV 0.38–0.39 → gen 決定（0.76 過／0.98 敗）；CV ≤ 0.28 → 敗
+- 能力邊界：有真人底子（gen ≤0.4）全自動 0–3%；純 AI＋高質量＋句構均勻類為 12B 引擎天花板（自動化路徑不存在，見 WORKFLOW「項目開發史與瓶頸回顧」）
 
 ## 證據包
 
 | 案例 | 結果 | 位置 |
 |---|---|---|
 | E2-grind（紅區 argumentative） | **0% AI／13% 查重／0 Integrity Flags** | [`evidence/E2-grind/`](evidence/E2-grind/) |
+| H2_ideal / H4_prodLT | **<20%（不顯示數字）×2** | [`evidence/turnitin-reports/`](evidence/turnitin-reports/) |
+| E2 一鍵 8.1 / 8.2 | 0% AI／22%、0% AI／16% | calibration 第 18–19 點 |
+| compare-stores 攻堅（原稿 0.983） | 0.573→**0%**（碼5）＋41%/98% 標定 | calibration 第 20–21 點 |
 
 每個證據包含：Turnitin 原件 PDF、三件套 docx（原稿/A 稿/B 稿）、終端 log、校準數據、統一報告 PDF 與其建置腳本 `build_pdf.py`。內容索引見各包內 `MANIFEST.md`。
 
