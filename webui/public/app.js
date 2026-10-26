@@ -4,6 +4,8 @@ const $ = (id) => document.getElementById(id);
 const state = {
   running: false,
   mode: 'v6',
+  tier: 'balanced',
+  dtype: 'academic',
   original: '',
   a: '',
   b: '',
@@ -52,6 +54,29 @@ function appendLog(line) {
   }
   el.scrollTop = el.scrollHeight;
   $('logCount').textContent = `（${state.logLines} 行）`;
+}
+
+// ── 9.0 擋位 → 引擎旗標（純介面映射，不改引擎） ──────────────────────────
+// 學術性：三擋全開，品質門（--anchor）預設開。
+// 非學術性：只提供快速擋位（學術語域規則與引用門不適用）。
+const TIER_FLAGS = {
+  fast:     { candidates: 3, noGrind: true, timeBudget: 8 },
+  balanced: { candidates: 5, timeBudget: 15 },
+  quality:  { candidates: 8, timeBudget: 35 },
+};
+
+function jobSpec() {
+  const academic = state.dtype === 'academic';
+  const tier = academic ? state.tier : 'fast';
+  return {
+    mode: 'v6',
+    target: 'balanced',
+    arch90: true,
+    anchor: academic,
+    ...TIER_FLAGS[tier],
+    tier,
+    docType: academic ? 'academic' : 'general',
+  };
 }
 
 // 每種做法的用戶可見步驟：label 給人看，keys 對應 server 推來的內部 stage。
@@ -449,13 +474,14 @@ async function run() {
     ? { maxWords, ...(Number.isInteger(floorWords) && floorWords >= 50 ? { floorWords } : {}) }
     : {};
   try {
+    const spec = state.mode === 'v6' ? jobSpec() : null;
     res = await fetch('/api/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(state.mode === 'v6'
         ? (docx
-            ? { mode: 'v6', target: $('lowAi').checked ? 'ideal' : 'balanced', arch90: $('arch90')?.checked || false, anchor: $('anchorGate')?.checked || false, ...budget, docxName: docx.name, docxBase64: docx.base64 }
-            : { mode: 'v6', target: $('lowAi').checked ? 'ideal' : 'balanced', arch90: $('arch90')?.checked || false, anchor: $('anchorGate')?.checked || false, ...budget, original })
+            ? { ...spec, ...budget, docxName: docx.name, docxBase64: docx.base64 }
+            : { ...spec, ...budget, original })
         : (docx
             ? {
                 docxName: docx.name,
@@ -650,21 +676,53 @@ $('clear').addEventListener('click', () => {
 // ── mode switch (自助 6.1 / 進階 2.0) ────────────────────────────────────────
 function applyMode() {
   const v6 = state.mode === 'v6';
-  $('v6Options').hidden = !v6;
   $('classicOptions').hidden = v6;
   $('hasAWrap').hidden = v6;
   if (v6 && $('hasA').checked) $('hasA').checked = false;
   $('aWrap').hidden = true;
-  document.querySelectorAll('.mode').forEach((el) => {
-    el.classList.toggle('selected', el.querySelector('input').value === state.mode);
-  });
   renderSteps();
   resetStages();
 }
-document.querySelectorAll('input[name="mode"]').forEach((el) => {
-  el.addEventListener('change', () => { state.mode = el.value; applyMode(); });
+
+// ── 擋位 / 文檔類型 ─────────────────────────────────────────────────────
+function renderTier() {
+  document.querySelectorAll('.tier').forEach((el) => {
+    const t = el.dataset.tier;
+    el.classList.toggle('selected', t === state.tier);
+    el.classList.toggle('disabled', state.dtype === 'general' && t !== 'fast');
+    const input = el.querySelector('input');
+    if (input) input.checked = t === state.tier;
+  });
+  document.querySelectorAll('.dtype').forEach((el) => {
+    el.classList.toggle('selected', el.querySelector('input').value === state.dtype);
+  });
+}
+
+document.querySelectorAll('.tier input').forEach((el) => {
+  el.addEventListener('change', () => {
+    if (state.dtype === 'general' && el.value !== 'fast') {
+      el.checked = false;          // 非學術性只提供快速
+      renderTier();
+      return;
+    }
+    state.tier = el.value;
+    renderTier();
+  });
+});
+document.querySelectorAll('.dtype input').forEach((el) => {
+  el.addEventListener('change', () => {
+    state.dtype = el.value;
+    if (state.dtype === 'general') state.tier = 'fast';
+    renderTier();
+  });
+});
+
+$('useClassic').addEventListener('change', () => {
+  state.mode = $('useClassic').checked ? 'classic' : 'v6';
+  applyMode();
 });
 applyMode();
+renderTier();
 
 $('diff').addEventListener('change', renderPanes);
 $('copyB').addEventListener('click', copyB);

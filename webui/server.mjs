@@ -179,6 +179,13 @@ function handleRun(req, res) {
       if (payload.arch90) args.push('--arch90');
       // 9.0: course quality gate (B+) against the built-in HKU SPACE anchor
       if (payload.anchor) args.push('--anchor', path.join(HERE, '..', 'pipeline', 'anchors'));
+      // 9.0 tiers (interface-layer mapping): fast = fewer candidates, no grind,
+      // hard wall-clock budget. Engine flags already exist; nothing new.
+      if (payload.noGrind) args.push('--no-grind');
+      if (Number.isInteger(payload.timeBudget) && payload.timeBudget >= 1) {
+        args.push('--time-budget', String(payload.timeBudget));
+      }
+      console.log(`[run] v6 argv: ${args.slice(1).join(' ')}`);
     } else {
       args = [PIPELINE, inputPath, '--out-dir', runDir, '--verify', verify, '--lang', lang];
       if (providedA) args.push('--humanized', providedAPath);

@@ -3,124 +3,132 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Humanizer</title>
+  <title>Humanizer · 學術文字整理</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <header class="top">
-    <div class="brand">
-      <span class="mark">HZ</span>
-      <div>
-        <h1>Humanizer</h1>
-        <p>把稿件整理成更自然、更流暢的學術文字。</p>
-      </div>
-    </div>
-    <div class="badges ambient">
-      <span id="version"></span>
+    <div class="top-inner">
+      <span class="wordmark">Humanizer<span class="dot">.</span></span>
+      <span class="top-note">本機處理 · 檔案不上傳</span>
     </div>
   </header>
 
-  <p class="privacy">🔒 檔案只留在這部電腦，不會上傳</p>
-
   <main class="wrap">
-    <section class="card">
-      <h2 class="section-q">① 選一種做法</h2>
+    <section class="hero">
+      <span class="hero-badge"><span class="badge-dot"></span>Workflow 9.0 · 多版本擇優</span>
+      <h1>把難寫難懂的文句，<span>變成流暢的學術文字。</span></h1>
+      <p class="lede">選一個處理檔位，放進稿件。完成後拿到修訂稿與品質檢查表。</p>
+    </section>
 
-      <div class="mode-row" role="tablist">
-        <label class="mode selected"><input type="radio" name="mode" value="v6" checked>
-          <span class="m-title">精修 <em class="rec">推薦</em></span>
-          <span class="m-desc">產生數個版本 → 選最好的 → 段落研磨 → 修語法</span>
-          <span class="m-desc dim">約 15–30 分鐘 · 適合：要交的稿件</span>
-        </label>
-        <label class="mode"><input type="radio" name="mode" value="classic">
-          <span class="m-title">快速</span>
-          <span class="m-desc">改一次就完成，可自行微調設定</span>
-          <span class="m-desc dim">約 10 分鐘 · 適合：想先看效果</span>
-        </label>
-      </div>
-
-      <div id="v6Options">
-        <label class="check">
-          <input id="lowAi" type="checkbox">
-          <span>盡量壓低 AI 味（成品會保留輕微口語感，需時較長）</span>
-        </label>
-        <label class="check">
-          <input id="arch90" type="checkbox">
-          <span>9.0 分層架構（狀態路由＋三環否決＋版本帳本；S4/S5 類原稿會停改並說明原因）</span>
-        </label>
-        <label class="check">
-          <input id="anchorGate" type="checkbox">
-          <span>課程品質門 B+（對照 HKU SPACE 真人 A 級錨點：語域／引用／結構三維驗收）</span>
-        </label>
-        <div class="options">
-          <label>字數上限
-            <input id="maxWords" type="number" min="100" step="50" placeholder="不限"
-              style="width:7em">
+    <section class="card stage">
+      <div class="field">
+        <p class="eyebrow">處理檔位</p>
+        <div class="tier-row" role="radiogroup" aria-label="處理檔位">
+          <label class="tier" data-tier="fast"><input type="radio" name="tier" value="fast">
+            <span class="t-name">快速</span>
+            <span class="t-meta">約 10 分鐘</span>
+            <span class="t-desc">單輪修整，只處理明顯問題</span>
           </label>
-          <label>字數下限
-            <input id="floorWords" type="number" min="50" step="50" placeholder="不限"
-              style="width:7em">
+          <label class="tier selected" data-tier="balanced"><input type="radio" name="tier" value="balanced" checked>
+            <span class="t-name">平衡 <em class="rec">推薦</em></span>
+            <span class="t-meta">約 20 分鐘</span>
+            <span class="t-desc">多版本擇優，逐句修補</span>
           </label>
-        </div>
-        <p class="hint">設了上限，交付前會先刪次要句（不動論點、數字、引用）；References 不計入字數。</p>
-      </div>
-
-      <div id="classicOptions" hidden>
-        <label class="check" id="hasAWrap">
-          <input id="hasA" type="checkbox">
-          <span>我已有 Humanizer 輸出（跳過 hz，只跑修補）</span>
-        </label>
-        <div id="aWrap" hidden>
-          <label for="humanized" class="block-label">Humanizer 輸出（A）</label>
-          <textarea id="humanized" rows="8" spellcheck="false"
-            placeholder="貼上 hz 的輸出…"></textarea>
-        </div>
-        <div class="options">
-          <label>驗證輪
-            <select id="verify">
-              <option value="audit" selected>audit · 只審查（建議）</option>
-              <option value="repair">repair · 自動再修</option>
-              <option value="off">off · 不驗證</option>
-            </select>
-          </label>
-          <label>語言
-            <select id="lang">
-              <option value="auto" selected>自動</option>
-              <option value="en">English</option>
-              <option value="zh">中文</option>
-            </select>
-          </label>
-          <label class="check inline">
-            <input id="auditOnly" type="checkbox">
-            <span>只審查，不改稿</span>
+          <label class="tier" data-tier="quality"><input type="radio" name="tier" value="quality">
+            <span class="t-name">質量</span>
+            <span class="t-meta">約 35 分鐘</span>
+            <span class="t-desc">最多版本＋段落研磨</span>
           </label>
         </div>
       </div>
 
-      <h2 class="section-q">② 放進你的稿件</h2>
-      <div class="label-row">
-        <label for="original" class="hint">.txt / .md / .docx</label>
-        <button id="pick" class="ghost small" type="button">選擇檔案</button>
+      <div class="field">
+        <p class="eyebrow">文檔類型</p>
+        <div class="dtype-row" role="radiogroup" aria-label="文檔類型">
+          <label class="dtype selected"><input type="radio" name="dtype" value="academic" checked>
+            <span class="dtype-t">學術性</span><span class="dtype-hint">論文、報告、作業</span>
+          </label>
+          <label class="dtype"><input type="radio" name="dtype" value="general">
+            <span class="dtype-t">非學術性</span><span class="dtype-hint">只提供快速檔位</span>
+          </label>
+        </div>
       </div>
-      <textarea id="original" rows="9" spellcheck="false"
-        placeholder="貼上文字，或把 .txt / .md / .docx 拖進來"></textarea>
-      <input id="file" type="file" accept=".txt,.md,.docx,text/plain" hidden>
-      <div id="fileChip" class="filechip" hidden>
-        <span class="chipmark">DOCX</span>
-        <span id="fileName" class="name"></span>
-        <button id="fileClear" class="ghost small" type="button">移除</button>
+
+      <div class="field">
+        <p class="eyebrow">放進你的稿件</p>
+        <div class="drop" id="drop">
+          <textarea id="original" rows="7" spellcheck="false"
+            placeholder="把 .docx / .txt / .md 拖進來，或直接貼上文字"></textarea>
+          <div class="drop-foot">
+            <span class="drop-hint">.docx / .txt / .md</span>
+            <button id="pick" class="ghost small" type="button">選擇檔案</button>
+          </div>
+        </div>
+        <input id="file" type="file" accept=".txt,.md,.docx,text/plain" hidden>
+        <div id="fileChip" class="filechip" hidden>
+          <span class="chipmark">DOCX</span>
+          <span id="fileName" class="name"></span>
+          <button id="fileClear" class="linklike" type="button">移除</button>
+        </div>
       </div>
 
       <div class="run-row">
         <button id="run" class="primary" type="button">開始整理</button>
-        <button id="clear" class="ghost" type="button">清空</button>
+      </div>
+      <div class="run-links">
+        <button id="clear" class="linklike" type="button">清空</button>
       </div>
 
-      <div class="promise">
-        <span class="promise-t">完成後你會拿到</span>
-        <span class="promise-i">· 修訂稿（.docx）</span>
-        <span class="promise-i">· 品質檢查表：語句節奏 / 文法 / 引用格式 / 論點清晰度</span>
-      </div>
+      <details class="advanced">
+        <summary>進階設定</summary>
+        <div class="options">
+          <label>字數上限
+            <input id="maxWords" type="number" min="100" step="50" placeholder="不限">
+          </label>
+          <label>字數下限
+            <input id="floorWords" type="number" min="50" step="50" placeholder="不限">
+          </label>
+        </div>
+        <p class="hint">設了上限，交付前會先刪次要句（不動論點、數字、引用）；References 不計入字數。</p>
+
+        <label class="check" id="legacyWrap">
+          <input id="useClassic" type="checkbox">
+          <span>使用舊版流程（單次改寫＋修補，不建議）</span>
+        </label>
+
+        <div id="classicOptions" hidden>
+          <label class="check" id="hasAWrap">
+            <input id="hasA" type="checkbox">
+            <span>我已有 Humanizer 輸出（跳過 hz，只跑修補）</span>
+          </label>
+          <div id="aWrap" hidden>
+            <label for="humanized" class="block-label">Humanizer 輸出（A）</label>
+            <textarea id="humanized" rows="6" spellcheck="false"
+              placeholder="貼上 hz 的輸出…"></textarea>
+          </div>
+          <div class="options">
+            <label>驗證輪
+              <select id="verify">
+                <option value="audit" selected>audit · 只審查（建議）</option>
+                <option value="repair">repair · 自動再修</option>
+                <option value="off">off · 不驗證</option>
+              </select>
+            </label>
+            <label>語言
+              <select id="lang">
+                <option value="auto" selected>自動</option>
+                <option value="en">English</option>
+                <option value="zh">中文</option>
+              </select>
+            </label>
+            <label class="check inline">
+              <input id="auditOnly" type="checkbox">
+              <span>只審查，不改稿</span>
+            </label>
+          </div>
+        </div>
+      </details>
 
       <div id="error" class="error" hidden></div>
     </section>
@@ -197,6 +205,10 @@
       </details>
     </section>
   </main>
+
+  <footer class="foot">
+    <span id="version" class="version-dim"></span>
+  </footer>
 
   <script src="/app.js"></script>
 </body>
