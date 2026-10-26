@@ -11,6 +11,7 @@ import { classifyDraft, unsourcedStatRatio } from '../../pipeline/router.mjs';
 import { diagnoseText } from '../../pipeline/diagnostics.mjs';
 import { buildArgumentMap, skeletonSurvived } from '../../pipeline/argument_map.mjs';
 import { findRepetitivePairs, DEDUP_INSTR } from '../../pipeline/grind.mjs';
+import { gradeAgainstAnchor } from '../../pipeline/anchor_gate.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-'));
 
@@ -287,4 +288,37 @@ test('duplicate citation across paragraphs is not fabrication (set semantics)', 
   const prose = 'Sales fell after the tax (Bandy et al., 2020). Industry data from Bandy et al., 2020 confirms reformulation.';
   const v = evaluateText({ draft, prose, lang: 'en' });
   assert.ok(!v.vetoes.some((x) => x.rule === 'inventedCitations'), JSON.stringify(v.vetoes));
+});
+
+// ── 9.0 課程品質門（hkuspace B+）────────────────────────────────────────────
+
+const ANCHOR = JSON.parse(fs.readFileSync(new URL('../../pipeline/anchors/hkuspace-anchor.json', import.meta.url), 'utf8'));
+
+test('anchor gate: B+ quality text passes all three rubric dimensions', () => {
+  const body = [
+    'The taxation of sugary drinks remains a contested policy instrument. This essay examines the fiscal and public health case, and argues that a well-designed levy is justified. The discussion draws on evidence from two national implementations.',
+    'First, consumption evidence supports the tax. Mexico recorded a 7.6 percent purchase decline after its levy (Colchero, 2016), and Berkeley directed the revenue into school nutrition programmes (Falbe, 2016). Colchero (2016) points out that price signals change behaviour at population scale, particularly among heavier consumers.',
+    'Second, the industry response matters. Over half of relevant products were reformulated with less sugar following the UK levy (Bandy, 2020), which means benefits reach consumers regardless of their purchasing choices. The revenue can also fund community health work in the most affected areas.',
+    'In conclusion, the evidence supports a proportionate levy. Although regressivity concerns deserve attention, earmarking the revenue addresses them directly. A carefully designed tax is therefore both effective and equitable.',
+  ].join('\n\n');
+  const text = body + '\n\nReferences\n\nBandy, L. (2020). Sugar reductions. BMC Medicine, 18(1).\nColchero, M. (2016). Beverage purchases. Health Affairs, 36(3).\nFalbe, J. (2016). Berkeley excise tax. AJPH, 106(10).';
+  // 測試用降門檻剖面（正文 100 詞起）——門檻本身由 fail-path 測試覆蓋
+  const P = JSON.parse(JSON.stringify(ANCHOR));
+  P.bplusGate.content.minWords = 100;
+  P.profile.words = [100, 750];
+  const g = gradeAgainstAnchor({ text, body, profile: P });
+  assert.equal(g.grade, 'B+');
+  assert.equal(g.pass, true);
+  assert.ok(g.metrics.citationsPer1k >= 12, JSON.stringify(g.metrics));
+  assert.ok(!g.fails.length, JSON.stringify(g.fails));
+});
+
+test('anchor gate: colloquial short text fails with FAIL items', () => {
+  const body = 'So basically the tax is a big deal. You can see it works everywhere. It is kinda obvious really.';
+  const g = gradeAgainstAnchor({ text: body, body, profile: ANCHOR });
+  assert.equal(g.grade, 'BELOW-B+');
+  assert.ok(g.fails.some((x) => x.rule === 'wordCount'), JSON.stringify(g.fails));
+  assert.ok(g.fails.some((x) => x.rule === 'paragraphs'));
+  assert.ok(g.fails.some((x) => x.rule === 'colloquial'));
+  assert.ok(g.fails.some((x) => x.rule === 'secondPerson'));
 });

@@ -1,0 +1,58 @@
+{
+ "essayplan-A": {
+  "words": 701,
+  "sentences": 30,
+  "paragraphs": 1,
+  "sentenceCv": 0.631,
+  "meanSentenceLen": 24.4,
+  "paraLenCv": 0,
+  "commaPer1k": 68.5,
+  "copulaPer1k": 12.8,
+  "firstPersonPer1k": 1.4,
+  "parenCitations": 14,
+  "narrativeCitations": 3,
+  "citationsPer1k": 24.3
+ },
+ "iae-essay-A": {
+  "words": 676,
+  "sentences": 22,
+  "paragraphs": 1,
+  "sentenceCv": 0.375,
+  "meanSentenceLen": 30.9,
+  "paraLenCv": 0,
+  "commaPer1k": 84.3,
+  "copulaPer1k": 7.4,
+  "firstPersonPer1k": 0.0,
+  "parenCitations": 8,
+  "narrativeCitations": 4,
+  "citationsPer1k": 17.8
+ },
+ "research-essay-Aplus": {
+  "words": 617,
+  "sentences": 33,
+  "paragraphs": 1,
+  "sentenceCv": 0.499,
+  "meanSentenceLen": 18.7,
+  "paraLenCv": 0,
+  "commaPer1k": 72.9,
+  "copulaPer1k": 25.9,
+  "firstPersonPer1k": 0.0,
+  "parenCitations": 8,
+  "narrativeCitations": 4,
+  "citationsPer1k": 19.4
+ },
+ "expository-sample": {
+  "words": 633,
+  "sentences": 32,
+  "paragraphs": 1,
+  "sentenceCv": 0.445,
+  "meanSentenceLen": 20.0,
+  "paraLenCv": 0,
+  "commaPer1k": 69.5,
+  "copulaPer1k": 19.0,
+  "firstPersonPer1k": 0.0,
+  "parenCitations": 7,
+  "narrativeCitations": 4,
+  "citationsPer1k": 17.4
+ }
+}

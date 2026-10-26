@@ -31,6 +31,7 @@ import { evaluateText } from './verify_gates.mjs';
 import { classifyDraft, ROUTE_EXIT } from './router.mjs';
 import { diagnoseText } from './diagnostics.mjs';
 import { buildArgumentMap, skeletonSurvived } from './argument_map.mjs';
+import { gradeAgainstAnchor, renderAnchorSection } from './anchor_gate.mjs';
 import { detectLang, splitSentences, wordCount, tokenSet, jaccard } from '../polish/src/text.mjs';
 import { factNumbers, citationsIn } from '../polish/src/checks.mjs';
 
@@ -73,6 +74,7 @@ const HELP = `v6.mjs — Workflow 8.0（選擇式管線：早停 × 手術 × �
   --mcts-unit U        paragraph（預設）｜sentence（對齊 8.4 句級研磨）
   --zmq                8.17 啟用 ZMQ ROUTER/DEALER 異步評分橋
   --arch90             9.0 分層架構：L0 五狀態路由＋L3 三環否決＋L4 版本帳本＋L1 診斷＋L2 骨架檢查
+  --anchor <dir|json>  9.0 課程品質門：對照真人 A 級錨點剖面（如 E:\hkuspace），交付 B+ 判定
   --time-budget MIN    9.0 週轉保護：超過 N 分鐘即跳過研磨/查重打磨（增益層），交付最佳已驗證候選
   --shred              8.18 前置粉碎：先用 shredder.py 打散句法（事實守衛）
   --shred-rate R       粉碎觸發率（預設 0.5）
@@ -91,6 +93,12 @@ function parseArgs(argv) {
     } else out._.push(a);
   }
   return out;
+}
+
+function loadAnchorProfile(p) {
+  const stat = fs.statSync(p);
+  const f = stat.isDirectory() ? path.join(p, 'hkuspace-anchor.json') : p;
+  return JSON.parse(fs.readFileSync(f, 'utf8'));
 }
 
 function runBridge(args) {
@@ -139,6 +147,7 @@ async function main() {
   const useShred = !!args.k.shred;
   const arch90 = !!args.k.arch90;
   const timeBudgetMin = args.k['time-budget'] ? Number(args.k['time-budget']) : (arch90 ? 15 : 0); // 9.0: turnaround protection, arch90 default 15min
+  const anchorPath = args.k.anchor ? String(args.k.anchor) : null;
   const useZmq = !!args.k.zmq;
   const useCrossover = cfg.crossover !== false;
   const useAdaptive = cfg.adaptive !== false;
@@ -1293,6 +1302,17 @@ async function main() {
       ledger.append({ stage: 'skeleton', before: originalProse, after: chosen.prose, verdict: { pass: archSkeleton.ok, vetoes: archSkeleton.problems.map((p) => ({ ring: 0, rule: 'skeleton', detail: p })), dimensions: {} } });
     }
 
+    // 9.0 課程品質門（B+）：對照真人 A 級錨點。FAIL = rubric C/D 帶風險 →
+    // exit 2 人工處理；WARN = 未達 A 級剖面（B+ 可容）→ 記錄。
+    let anchorGate = null;
+    if (anchorPath) {
+      try {
+        const profile = loadAnchorProfile(anchorPath);
+        anchorGate = gradeAgainstAnchor({ text: archFullText || originalProse, body: chosen.prose, profile });
+        console.log(`  課程品質門：${anchorGate.grade}${anchorGate.fails.length ? `（${anchorGate.fails.length} FAIL）` : ' ✓'}`);
+      } catch (e) { console.log(`  課程品質門跳過：${e.message.slice(0, 60)}`); }
+    }
+
     const aDocx = path.join(outDir, `${base}.v6-A.docx`);
     const aProse = path.join(outDir, `${base}.v6-A.prose.txt`);
     fs.writeFileSync(aProse, chosen.prose + '\n', 'utf8');
@@ -1427,6 +1447,7 @@ async function main() {
         diagnostics: diag90 ? { issues: diag90.issues, metrics: diag90.metrics } : null,
         finalVerdict: archFinal, rolledBack: archRolledBack,
         skeleton: archSkeleton, ledger: ledger?.file ?? null,
+        anchorGate,
       };
     }
     fs.writeFileSync(v6Report, JSON.stringify(report, null, 1), 'utf8');
@@ -1450,7 +1471,7 @@ ${rows}
 
 原稿基準：ppl ${fmt(originalScore?.perplexity, 1)} · gen ${fmt(originalScore?.p_ai_gen)} · edit ${fmt(originalScore?.p_ai_edit)} · 語法傷率 ${fmt(origDamage)}
 ${budgetStats ? `\n## 字數預算（7.6）\n\n- 上限 ${budgetStats.maxWords}${budgetStats.floorWords != null ? ` · 下限 ${budgetStats.floorWords}` : ''}：**${budgetStats.beforeWords} → ${budgetStats.afterWords} 詞**\n- 刪句 ${budgetStats.deletedSentences}（-${budgetStats.deletedWords} 詞） · 定向壓縮 ${budgetStats.compressedParas} 段${budgetStats.failedCompressions ? ` · 壓縮失敗 ${budgetStats.failedCompressions} 段` : ''}${budgetStats.cutRatio != null ? ` · 削幅 ${(budgetStats.cutRatio * 100).toFixed(0)}%` : ''}\n${budgetStats.cvWarn ? `- ⚠ 壓縮後 CV ${budgetStats.cvWarn} 低於安全帶——建議人工覆核節奏\n` : ''}` : ''}${grindInfo ? `\n## 段級研磨（8.0）\n\n- 動作：**${grindInfo.action === 'applied' ? '採用' : grindInfo.action === 'reverted' ? `回退（${grindInfo.reason}）` : grindInfo.action === 'skipped' ? `跳過（${grindInfo.reason || 'form 模式'}）` : grindInfo.action === 'no-op' ? '無段改善（文本不變）' : '停用'}**\n${grindInfo.preGen != null ? `- 整份 gen：${fmt(grindInfo.preGen)} → ${fmt(grindInfo.postGen)} · 語法傷率：${fmt(grindInfo.postDamage)}\n` : ''}${grindInfo.stats && grindInfo.stats.attempts ? `- 嘗試 ${grindInfo.stats.attempts}＝採用 ${grindInfo.stats.accepted}＋no-gain ${grindInfo.stats.noGain}＋拒收 ${grindInfo.stats.rejected}${grindInfo.stats.failed ? `＋失敗 ${grindInfo.stats.failed}` : ''} · ${grindInfo.stats.roundsRun} 輪\n` : ''}` : ''}${simInfo ? `\n## 查重打磨（8.2）\n\n- 動作：**${simInfo.action === 'applied' ? '採用' : simInfo.action === 'reverted' ? `回退（${simInfo.reason}）` : '無變化'}**\n${simInfo.pplBefore != null ? `- 整份 ppl：${fmt(simInfo.pplBefore, 1)} → ${fmt(simInfo.pplAfter, 1)}（較高＝較少通用措辭）\n` : ''}${simInfo.stats && simInfo.stats.moves && simInfo.stats.moves.length ? `- 改寫句：${simInfo.stats.moves.map((m) => `p${m.para + 1}s${m.sent + 1} ppl ${m.pplBefore}→${m.pplAfter}`).join('、')}\n` : ''}` : ''}${citeCheck && (citeCheck.mismatches.length || citeCheck.checked) ? `\n## 引用一致性（8.2）\n\n- 內文引用 ${citeCheck.checked} 個 · References 條目 ${citeCheck.references} 筆\n${citeCheck.fixes.length ? `- 已自動對齊：${citeCheck.fixes.map((f) => `${f.from} → ${f.to}`).join('、')}\n` : ''}${citeCheck.mismatches.filter((m) => !m.fixed).length ? `- ⚠ 需人工核對：${citeCheck.mismatches.filter((m) => !m.fixed).map((m) => `${m.inText} vs [${m.refYears.join('/')}]`).join('、')}\n` : ''}` : ''}${qFix && qFix.surgeries ? `\n## 二級品質手術（8.2，CoLA < ${qFix.threshold}）\n\n${qFix.list.map((s) => `- 「${s.before}」→「${s.after}」`).join('\n')}\n` : ''}
-${formCheck ? `\n## form 檢查\n\n引用 ${formCheck.citations} 個 / 數字 ${formCheck.numbers} 個：${formCheck.missingCitations.length || formCheck.missingNumbers.length ? `**缺 ${formCheck.missingCitations.length} 引用、${formCheck.missingNumbers.length} 數字，需人工核對**` : '全數保留 ✓'}\n` : ''}${arch90 ? archSection : ''}
+${formCheck ? `\n## form 檢查\n\n引用 ${formCheck.citations} 個 / 數字 ${formCheck.numbers} 個：${formCheck.missingCitations.length || formCheck.missingNumbers.length ? `**缺 ${formCheck.missingCitations.length} 引用、${formCheck.missingNumbers.length} 數字，需人工核對**` : '全數保留 ✓'}\n` : ''}${arch90 ? archSection : ''}${anchorGate ? renderAnchorSection(anchorGate) : ''}
 ## A → B
 
 | 指標 | A（${chosen.crossover ? '重組X' : `cand${chosen.id}`}） | B | 變化 |
@@ -1488,6 +1509,10 @@ ${formCheck ? `\n## form 檢查\n\n引用 ${formCheck.citations} 個 / 數字 ${
       } else {
         console.log('9.0：交付否決已回退至最後綠點——exit 0（風險卡記錄否決與回退）');
       }
+    }
+    if (anchorGate && !anchorGate.pass) {
+      console.log('課程品質門：BELOW-B+（見風險卡 FAIL 項）——exit 2');
+      process.exitCode = 2;
     }
   } finally {
     await closeDetector().catch(() => {});

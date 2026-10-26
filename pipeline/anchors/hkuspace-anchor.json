@@ -1,0 +1,42 @@
+{
+  "name": "hkuspace-ccen4003",
+  "description": "HKU SPACE CCEN4003 Introduction to Academic English — 真人 A 級樣本錨點（Essay plan A／iae Essay A／Research Essay A+／官方 Expository Sample）。交付目標：B+ 以上（rubric 定義見 anchors/rubric-*.txt）。",
+  "source": "E:\\hkuspace\\ccen4003 source",
+  "profile": {
+    "words": [600, 750],
+    "sentenceCv": [0.35, 0.65],
+    "meanSentenceLen": [18, 31],
+    "commaPer1k": [55, 95],
+    "copulaPer1k": [7, 26],
+    "firstPersonPer1k": [0, 1.5],
+    "citationsPer1k": [12, 30],
+    "narrativeCitationsMin": 2
+  },
+  "bplusGate": {
+    "content": {
+      "minWords": 600,
+      "minParagraphs": 4,
+      "rolesComplete": true,
+      "maxUnsourcedStatRatio": 0.6
+    },
+    "language": {
+      "maxColloquialDelta": 0,
+      "maxSecondPerson": 0,
+      "maxContractions": 0,
+      "registerFirst": "正式書面語（rubric Language 帶：偶發錯誤不妨礙溝通＝CoLA 傷率帶 0-0.2 可容）"
+    },
+    "referencing": {
+      "minSources": 3,
+      "referencesSection": true,
+      "inTextMatchList": true,
+      "alphabeticalList": true,
+      "narrativeReportingVerbMin": 2
+    }
+  },
+  "lessons": [
+    "A 級錨點 sentenceCv 0.375-0.631：管線 CV 帶 0.45-0.65 落於 A 級分佈內",
+    "A 級錨點 copula 7.4-25.9/千詞：hugo 的 copula ≤6 閘門對本課程錨點反向（族軸定理第三次實證）",
+    "A 級錨點逗號密度 68-84/千詞：逗號鏈是人類風格——壓平逗號反而是 AI 訊號",
+    "引用密度 17-24/千詞是課程規範；B+ 門檻設 ≥12/千詞"
+  ]
+}
