@@ -706,7 +706,8 @@ async function main() {
           pool = [...candidates, assembled];
         }
         const froms = Object.values(xo.provenance).join(',');
-        console.log(`  重組 X：逐段取自 cand{${froms}} · CV=${fmt(stats.cv, 3)} damage=${fmt(assembled.grammarDamage)}`);
+        // 9.0.1: X may have been dropped by the veto ring → assembled is null.
+        console.log(`  重組 X：逐段取自 cand{${froms}} · CV=${fmt(stats.cv, 3)} damage=${fmt(assembled ? assembled.grammarDamage : 0)}` + (assembled ? '' : '（未採用）'));
       } else {
         console.log('  重組跳過（可用候選 < 2）');
       }
@@ -1293,6 +1294,81 @@ async function main() {
           console.log(`  ⚠ 9.0 交付否決（${archFinal.vetoes.map((v) => v.rule).join('、')}）——綠點無段落映射，保留現版並標記人工覆核（exit 2）`);
           archRolledBack = true;
           archKeptFailing = true;
+        }
+        // 9.0.5: the rollback above restores PRE-post-processing text, which
+        // silently discards deterministic repairs (register surgery, LT,
+        // mechanical punctuation). Re-apply them to the rolled-back version so
+        // reversion only undoes generative damage, not safe repairs.
+        if (archRolledBack && !archKeptFailing) {
+          let regen = 0;
+          try {
+            for (const pi of Object.keys(chosen.paras)) {
+              const fixed = mechanicalPolish(chosen.paras[pi], lang);
+              if (fixed !== chosen.paras[pi]) { chosen.paras[pi] = fixed; regen++; }
+            }
+            if (!args.k['no-lt']) {
+              const ltIn2 = path.join(workDir, 'ltmap-rb-in.json');
+              const ltOut2 = path.join(workDir, 'ltmap-rb-out.json');
+              fs.writeFileSync(ltIn2, JSON.stringify({
+                indices: Object.keys(chosen.paras).map(Number),
+                texts: Object.keys(chosen.paras).map((i) => chosen.paras[i]),
+              }), 'utf8');
+              runLtFix(['fixmap', ltIn2, ltOut2, lang === 'zh' ? 'zh' : 'en-GB']);
+              if (fs.existsSync(ltOut2)) {
+                const fm2 = JSON.parse(fs.readFileSync(ltOut2, 'utf8'));
+                if ((fm2.fixes || []).length) {
+                  const keys2 = Object.keys(chosen.paras);
+                  fm2.texts.forEach((x, i) => { chosen.paras[keys2[i]] = x; });
+                  regen += fm2.fixes.length;
+                }
+              }
+            }
+            // register surgery on the rolled-back text (you/contractions)
+            const regRe2 = [/(you|your)/i, /(it's|they're|don't|can't|won't|isn't|you'll|we'll)/i];
+            let regDone = 0;
+            for (const i of Object.keys(chosen.paras)) {
+              const sents2 = splitSentences(chosen.paras[i] || '', lang);
+              for (const s of [...sents2].sort((a, b) => b.start - a.start)) {
+                if (wordCount(s.text, lang) < 8 || !regRe2.some((re) => re.test(s.text))) continue;
+                try {
+                  const origSents2 = splitSentences(originalsByPara[i] || '', lang).map((x) => x.text);
+                  let oBest = null, bSim = 0;
+                  for (const os of origSents2) {
+                    const sim = jaccard(tokenSet(s.text, lang), tokenSet(os, lang));
+                    if (sim > bSim) { bSim = sim; oBest = os; }
+                  }
+                  const cand2 = await completeUnit({ text: oBest || s.text, sampling: { temperature: 0.9, topP: 0.95 },
+                    instruction: 'Rewrite this sentence in an academic register: no contractions, no second person, no rhetorical questions, no sentence fragments, no spoken fillers. Keep the original meaning and all facts exactly.' });
+                  if (!validateUnit(oBest || s.text, cand2, lang).ok) continue;
+                  if (regRe2.some((re) => re.test(cand2))) continue;
+                  if (jaccard(tokenSet(cand2, lang), tokenSet(s.text, lang)) > 0.9) continue;
+                  if (oBest) {
+                    const [pr] = await nliPairs([[oBest, cand2]]);
+                    if (pr && (pr.contradict || 0) > 0.5) continue;
+                  }
+                  chosen.paras[i] = chosen.paras[i].slice(0, s.start) + cand2 + chosen.paras[i].slice(s.end);
+                  regDone++;
+                } catch { /* keep original sentence */ }
+              }
+            }
+            chosen.prose = targetIdx.map((i) => chosen.paras[i]).filter(Boolean).join(String.fromCharCode(10, 10));
+            const stR2 = candidateStats({ originalProse, prose: chosen.prose, lang });
+            stR2.coverage = chosen.stats?.coverage ?? 1;
+            chosen.stats = stR2;
+            const [scR2] = await scoreTexts([chosen.prose]);
+            if (scR2) chosen.score = { ...(chosen.score || {}), ...scR2 };
+            const reV = evaluateText({ draft: originalProse, prose: chosen.prose, lang, cvDraft: archOrigCv, cvProse: chosen.stats?.cv, paragraphs: plan.paragraphs });
+            if (reV.pass) {
+              archFinal = reV;
+              ledger.append({ stage: 'repaired', before: originalProse, after: chosen.prose, verdict: reV, meta: { mech: regen, register: regDone } });
+              console.log(`  ✓ 9.0.5 回退後重做確定性修復：機械/LT ${regen} 處、語域 ${regDone} 句 → 重新驗證通過`);
+            } else {
+              console.log(`  ⚠ 修復後仍未過（${reV.vetoes.map((v) => v.rule).join('、')}）——保留回退版並標記人工覆核`);
+              archKeptFailing = true;
+            }
+          } catch (e) {
+            console.log(`  ⚠ 回退後修復失敗（${e.message.slice(0, 80)}）——保留回退版`);
+          }
         }
       }
       const skBefore = buildArgumentMap(originalProse, lang);
