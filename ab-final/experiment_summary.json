@@ -1,0 +1,39 @@
+{
+ "input": "FINAL WRITTEN ESSAY.docx (446 words body, zero contractions, zero you)",
+ "runs": [
+  {
+   "name": "run-client1 (pure routeb, old code)",
+   "words": 642,
+   "cv": 0.671,
+   "contractions": 9,
+   "you": 4,
+   "ai_tested": null
+  },
+  {
+   "name": "run-client2 (mixed A+B, pre-dynamic-threshold)",
+   "words": 634,
+   "cv": 0.579,
+   "contractions": 4,
+   "you": 3,
+   "ai_tested": "30%"
+  },
+  {
+   "name": "ab-final pureB2 (pure routeb, new code)",
+   "words": 615,
+   "cv": 0.721,
+   "contractions": 4,
+   "you": 0,
+   "ai_tested": null
+  },
+  {
+   "name": "ab-final mixed (A+B, new code)",
+   "words": 625,
+   "cv": 0.769,
+   "contractions": 8,
+   "you": 2,
+   "ai_tested": null
+  }
+ ],
+ "client_verdict": "run-client2 版本質量最好（30% AI 但可讀性最高）",
+ "contradiction": "質量最好的版本 AI 率 30%，不是 0%"
+}
