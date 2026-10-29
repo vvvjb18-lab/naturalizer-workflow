@@ -207,3 +207,74 @@ CV 在 0.39–0.61 之間跳動，damage 在 0.00–0.13 之間跳動。
 
 理由：這是唯一不犧牲 CV 的路。但我們不確定篩掉口語會不會傷 CV，
 所以想先聽你的判斷——**NUCLE 的句長參差與口語特徵，在資料層面上是否可分離？**
+
+---
+
+## 六、附錄：最新交付文本的逐項審計（Argon 看這裡）
+
+以下是測試 8（混合池）的實際交付稿，指標是 CV 0.407 / gen 0.019 / 語法硬傷 0，
+但讀文本會看到三類問題。**gen 0.019 不代表可以交。**
+
+### 6.1 重複論證：routeb 拉高 CV 的主要手段
+
+同一段落內，同一個意思說兩遍：
+
+> According to Garena's own statement, they call him "a role model for many of us"
+> rather than a gaming expert. **Garena themselves refer to him as "a role model
+> for many of us" (not a games expert)** and they are targeting "hundreds of
+> millions of people" (Garena, 2020).
+
+> Ronaldo plays Free Fire (premise), therefore it's good (conclusion). **The
+> argument takes place in the mind of the viewer: Ronaldo plays Free Fire
+> (premise), so it must be good (conclusion).**
+
+第二組是「同一個三段論用兩種措辭寫兩次」。原文只有一次。
+
+**這是字數從 446 漲到 502 的真正來源**——不是新增內容，是鋪陳與重複。
+而 routeb 靠這種重複把句長方差拉上去（CV 從 0.327 到 0.58）。
+
+也就是說：**routeb 的高 CV 有一部分是「靠車軲轆話換來的」。**
+
+### 6.2 語域污染：you / 縮寫 / 第一人稱
+
+原稿：446 詞、零縮寫、零 you。
+交付：502 詞、15 處縮寫（展開後 6）、4 處 you，包括**大寫的 YOU**：
+
+> You may like him, but he is not an impartial voice as he is the brand ambassador for Garena.
+
+> ...but it's a reason for **YOU**, not something that shows that it's good.
+
+> ...it **doesn't** have any premise or conclusion（段 7）
+
+> **Our** best defence is to ask what a celebrity knows about a product（段 12，結論段）
+
+### 6.3 選擇邏輯選錯了候選：risk 權重偏向 gen，忽略 CV
+
+這一輪真正通過 NLI 的候選與指標：
+
+| 候選 | risk | CV | gen | damage |
+|---|---|---|---|---|
+| cand1 | **0.058** | 0.407 | 0.019 | 0.000 ← **被選中** |
+| cand4 | 0.075 | **0.580** | **0.014** | 0.000 |
+| 重組 X | 0.095 | 0.519 | 0.041 | 0.000 |
+| cand2 | 0.117 | 0.554 | 0.021 | 0.000 |
+| cand6 | 0.175 | 0.575 | 0.046 | 0.000 |
+
+**cand4 的 CV 高 0.173、gen 低 0.005、damage 同為 0，只因為 risk 高 0.017 就落選。**
+選中的 cand1 CV 0.407 低於 10.0 目標 0.42，直接導致「分數軸也沒過」。
+
+現行 `risk` 權重：`burst 0.3 + damage 0.3 + gen 0.25 + edit 0.05 + plx 0.05 + copy 0.05`。
+兩個候選 damage 都是 0、gen 只差 0.005，差別全落在 burst 項——
+但 burst 是「離 CV 帶的距離」，cand4 的 CV 0.580 在帶內（0.45–0.65），cand1 的 0.407 在帶外，
+理論上 burst 項應該幫 cand4，實際卻相反。
+
+**我們懷疑 risk 計算裡 burst 的歸一化或帶寬設定有問題，但這是你更熟悉的代碼路徑。**
+這也是 Q3（採樣方差）之外的一個獨立問題：**選擇器本身在拖後腿。**
+
+### 6.4 這段文本教給我們的
+
+1. **gen 低不等於可交。** 0.019 的分數配上「重複論證 + 大寫 YOU」，客戶會直接退回。
+2. **routeb 的 CV 有一部分是假的**——靠重複與鋪陳撐起來，不是真實的節奏變化。
+3. **選擇器需要重審**：如果 cand4 被選中，這一輪的 CV 是 0.580（達標），
+   質量問題仍然存在但至少分數軸過。**先修選擇器，成本最低。**
+
