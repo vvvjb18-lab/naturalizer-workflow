@@ -740,7 +740,7 @@ async function main() {
             ? { maxWords: Math.round(origWC * ARCH10_CONFIG.maxLengthRatio),
                 minCv: ARCH10_CONFIG.targetCv }
             : {},
-          log: (m) => log(m),
+          log: (m) => console.log(m),
         });
         const prose = targetIdx.map((i) => xo.paras[i]).filter(Boolean).join('\n\n');
         const stats = candidateStats({ originalProse, prose, lang });
@@ -860,7 +860,8 @@ async function main() {
         } else {
           console.log(`  ${cid} 救援未修復全部問題段，淘汰`);
         }
-        if (arch90 && c.archVerdict?.pass) nliFallback.push(c);
+        // 10.0: hard filters passed but NLI objected — keep as last-resort pool
+        if ((arch90 && c.archVerdict?.pass) || (ARCH10 && !arch90)) nliFallback.push(c);
         continue;
       }
       passing.push(c);
@@ -870,8 +871,8 @@ async function main() {
       passing.push(...nliFallback);
     }
     if (!passing.length) {
-      if (arch90) {
-        console.log('  ⚠ 9.0：無候選通過（硬過濾/否決環/NLI）——以去重後原稿交付（帳本 #0 為最後綠點）');
+      if (arch90 || ARCH10) {
+        console.log('  ⚠ 10.0：無候選通過（硬過濾/否決環/NLI）——以去重後原稿交付，風險卡標注為未改寫');
         chosen = { id: 'orig', paras: { ...originalsByPara }, prose: originalProse, stats: candidateStats({ originalProse, prose: originalProse, lang }), score: originalScore, grammarDamage: 0, surgeries: [], failures: [], archFrozen: true };
       } else throw new Error('所有 eligible 候選都被 NLI 擋下');
     } else {
