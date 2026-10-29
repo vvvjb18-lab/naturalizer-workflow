@@ -52,6 +52,47 @@ function buildPromptShaInput() {
 
 // ── app API ─────────────────────────────────────────────────────────────────
 export const APP_URL = process.env.HZ_APP_URL || 'http://127.0.0.1:47615';
+export const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
+
+// ── 10.0 parallel engine pool ───────────────────────────────────────────────
+// Two fine-tuned engines join the stock hz model. Measured behaviour (v11):
+//   routeb (humanizer-12b continued) drives ai_mk 0.45→0.16, CV 0.28→0.41
+//   routea (Qwen3.5-9B) matches the student target text (dist -0.045)
+// They are complementary but NON-ADDITIVE: chaining is useless because each
+// engine returns its input unchanged once it already reads human
+// (measured echo lev 0.00–0.085). Run them in parallel, pick per paragraph.
+// Load one model at a time: one switch per document, never per unit.
+export const ENGINES = {
+  hz: {
+    kind: 'app', url: APP_URL, format: 'hz',
+    enabled: process.env.DISABLE_HZ !== '1',
+  },
+  routeb: {
+    kind: 'ollama', url: OLLAMA_URL, format: 'hz', think: false,
+    model: process.env.ROUTE_B_MODEL || 'routeb-humanizer12b',
+    enabled: process.env.DISABLE_ROUTE_B !== '1',
+  },
+  routea: {
+    kind: 'ollama', url: OLLAMA_URL, format: 'student', think: false,
+    model: process.env.ROUTE_A_MODEL || 'routea-qwen35-9b',
+    enabled: process.env.DISABLE_ROUTE_A !== '1',
+  },
+};
+
+// route A was trained with this instruction, not hz's INSTR. Feeding it hz's
+// INSTR puts it out of distribution (it learned this exact string).
+const STUDENT_TPL = "Rewrite the following paragraph to sound like a genuine university student writing an academic essay "
+  + "— natural, slightly imperfect, with the rhythm and word choices of a real L2 learner. Keep the same content.\n\n";
+
+export function engineNames() {
+  return Object.keys(ENGINES).filter((n) => ENGINES[n].enabled !== false);
+}
+
+export function engineInfo(name) {
+  const e = ENGINES[name];
+  if (!e) throw new Error(`unknown engine: ${name}`);
+  return e;
+}
 
 async function appPost(pathname, body, timeoutMs) {
   const ctl = new AbortController();
@@ -65,6 +106,41 @@ async function appPost(pathname, body, timeoutMs) {
     });
     if (!res.ok) throw new Error(`app HTTP ${res.status}: ${String(await res.text()).slice(0, 200)}`);
     return await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function ollamaGenerate(cfg, prompt, nPredict, opts, timeoutMs) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const body = {
+      model: cfg.model,
+      prompt,
+      raw: true,
+      stream: false,
+      options: {
+        num_predict: nPredict,
+        num_ctx: Number(process.env.OLLAMA_NUM_CTX || 8192),
+        temperature: opts.temperature,
+        top_p: opts.top_p,
+        top_k: opts.top_k ?? 0,
+        min_p: opts.min_p ?? 0,
+        repeat_penalty: opts.repeat_penalty ?? 1.0,
+      },
+    };
+    if (cfg.think === false) body.think = false;
+    const res = await fetch(cfg.url + '/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: ctl.signal,
+    });
+    if (!res.ok) throw new Error(`ollama HTTP ${res.status}: ${String(await res.text()).slice(0, 200)}`);
+    const d = await res.json();
+    if (d.error) throw new Error(`ollama: ${String(d.error).slice(0, 160)}`);
+    return d;
   } finally {
     clearTimeout(timer);
   }
@@ -114,29 +190,41 @@ export function cloakNumbers(text) {
   };
 }
 
-export async function completeUnit({ text, sampling = {}, timeoutMs = 600000, instruction = '', styleGuide = '' }) {
+export async function completeUnit({ text, sampling = {}, timeoutMs = 600000, instruction = '', styleGuide = '', engine = 'hz' }) {
+  const cfg = engineInfo(engine);
   const tokens = await countTokens(text);
   // 7.6 word-budget mode: same hz rewrite instruction plus an explicit length
-  // directive. Deliberately outside the byte-exact fingerprint contract — this
-  // is our own extension, never claims to be hz's prompt.
+  // directive. Deliberately outside the byte-exact fingerprint contract —
+  // this is our own extension, never claims to be hz's prompt.
   // 8.16: style guidance rides along in either mode.
-  const prompt = instruction
-    ? `${INSTR}\n\n${instruction}${styleGuide ? `\n\n${styleGuide}` : ''}\n\n${text.trim()}${SEP}`
-    : buildPrompt(text, styleGuide);
-  const body = {
-    prompt,
-    n_predict: instruction
-      ? Math.min(2048, Math.max(128, Math.round(tokens * 1.6)))
-      : nPredictFor(tokens),
+  // 10.0: route A has its own instruction; style guidance is not applied to it
+  // (its prompt must match the string it was tuned on).
+  const prompt = cfg.format === 'student'
+    ? STUDENT_TPL + text.trim()
+    : (instruction
+        ? `${INSTR}\n\n${instruction}${styleGuide ? `\n\n${styleGuide}` : ''}\n\n${text.trim()}${SEP}`
+        : buildPrompt(text, engine === 'hz' ? styleGuide : ''));
+  const nPredict = instruction
+    ? Math.min(2048, Math.max(128, Math.round(tokens * 1.6)))
+    : nPredictFor(tokens);
+  const opts = {
     temperature: sampling.temperature ?? 1.0,
     top_p: sampling.topP ?? 0.95,
     top_k: 0,
     min_p: 0,
     repeat_penalty: 1.0,
   };
-  const d = await appPost('/api/completion', body, timeoutMs);
-  const out = String(d.content || '').replace(/\s*\n\s*/g, ' ').trim();
-  if (!out) throw new Error('empty completion');
+  let raw;
+  if (cfg.kind === 'app') {
+    const d = await appPost('/api/completion',
+      { prompt, n_predict: nPredict, ...opts }, timeoutMs);
+    raw = d.content;
+  } else {
+    const d = await ollamaGenerate(cfg, prompt, nPredict, opts, timeoutMs);
+    raw = d.response;
+  }
+  const out = String(raw || '').replace(/\s*\n\s*/g, ' ').trim();
+  if (!out) throw new Error(`empty completion (${engine})`);
   return out;
 }
 
@@ -175,7 +263,7 @@ export function validateUnit(before, after, lang = 'en') {
 // plan = docx_bridge.py `plan` output. Returns per-unit rewrites for every
 // target paragraph; a unit that never validates after `retries` marks the
 // candidate as broken (coverage < 1) instead of silently dropping prose.
-export async function generateCandidate({ plan, sampling = {}, retries = 2, lang = 'en', log = () => {}, styleGuide = '' }) {
+export async function generateCandidate({ plan, sampling = {}, retries = 2, lang = 'en', log = () => {}, styleGuide = '', engine = 'hz' }) {
   const unitTexts = {};
   const failures = [];
   for (const [paraIdx, target] of Object.entries(plan.targets)) {
@@ -188,7 +276,7 @@ export async function generateCandidate({ plan, sampling = {}, retries = 2, lang
           const isLast = attempt === retries;
           const sampling2 = isLast ? { temperature: 0.7, topP: 0.9 } : sampling;
           const { cloaked, restore } = cloakNumbers(unit.text);
-          const outRaw = await completeUnit({ text: cloaked, sampling: sampling2, styleGuide });
+          const outRaw = await completeUnit({ text: cloaked, sampling: sampling2, styleGuide, engine });
           const out = restore(outRaw);
           const v = validateUnit(unit.text, out, lang);
           if (v.ok) {
@@ -203,7 +291,7 @@ export async function generateCandidate({ plan, sampling = {}, retries = 2, lang
           log(`  unit ${unit.id} attempt ${attempt + 1} failed: ${e.message}`);
         }
       }
-      if (!ok) failures.push({ unit: unit.id, para: paraIdx, reason: last });
+      if (!ok) failures.push({ unit: unit.id, para: paraIdx, reason: last, engine });
     }
   }
   const paras = {};
@@ -217,6 +305,72 @@ export async function generateCandidate({ plan, sampling = {}, retries = 2, lang
     ? Object.keys(paras).length / Object.keys(plan.targets).length
     : 0;
   return { unitTexts, paras, failures, coverage };
+}
+
+// ── 10.0 parallel pool ──────────────────────────────────────────────────────
+// Presets follow WORKFLOW-10.0 §3.1. route B carries the anti-AI load, route A
+// carries target-text fidelity; the mix shifts with the detected register.
+export const POOL_PRESETS = {
+  alpha: {
+    routeb: [{ temperature: 0.90 }, { temperature: 1.00 }, { temperature: 1.05 }],
+    routea: [{ temperature: 0.90 }, { temperature: 1.00 }],
+  },
+  beta: {
+    routeb: [{ temperature: 0.90 }, { temperature: 1.00 }, { temperature: 1.05 }],
+    routea: [{ temperature: 0.95 }],
+  },
+  gamma: {
+    routeb: [{ temperature: 0.95 }, { temperature: 1.05 }],
+    routea: [{ temperature: 0.85 }, { temperature: 0.95 }, { temperature: 1.05 }],
+  },
+};
+
+// Release a model so the next engine has room. Ollama keeps weights for 5 min
+// by default; route B alone is 8.9 GB on a 16 GB card.
+export async function unloadEngine(name) {
+  const cfg = ENGINES[name];
+  if (!cfg || cfg.kind !== 'ollama') return false;
+  try {
+    await fetch(cfg.url + '/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: cfg.model, keep_alive: 0 }),
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Run the whole plan through one engine, then the next. One model switch per
+// document — switching per unit would thrash VRAM and add minutes.
+export async function generatePool({ plan, preset = 'gamma', retries = 2, lang = 'en',
+                                     log = () => {}, styleGuide = '', engines = null }) {
+  const spec = POOL_PRESETS[preset];
+  if (!spec) throw new Error(`unknown pool preset: ${preset}`);
+
+  const order = (engines || Object.keys(spec)).filter((e) => spec[e] && ENGINES[e]?.enabled);
+  if (!order.length) throw new Error('no enabled engine in pool');
+
+  const out = [];
+  let n = 0;
+  let current = null;
+
+  for (const engine of order) {
+    if (current && current !== engine) await unloadEngine(current);
+    current = engine;
+    const runs = spec[engine];
+    log(`[pool] engine=${engine} model=${ENGINES[engine].model || 'app'} candidates=${runs.length}`);
+
+    for (const sampling of runs) {
+      const t0 = Date.now();
+      const c = await generateCandidate({ plan, sampling, retries, lang, log, styleGuide, engine });
+      out.push({ id: `cand${n++}`, engine, sampling, ...c, ms: Date.now() - t0 });
+      log(`[pool] ${engine} t=${sampling.temperature} coverage=${(c.coverage * 100).toFixed(0)}% `
+        + `fails=${c.failures.length} ${(Date.now() - t0) / 1000}s`);
+    }
+  }
+  return out;
 }
 
 // ── structural features for ranking ─────────────────────────────────────────
@@ -458,12 +612,44 @@ export function rankCandidates(cands, { weights = {}, filters = {} } = {}) {
 // combinations. Per-paragraph choice = lowest damage → CV-band distance →
 // stickiness (prefer the globally best candidate on near-ties so the essay
 // keeps one voice).
-export function assembleCrossover({ cands, paraStats, cvBand = [0.45, 0.65], log = () => {} }) {
+// ── 10.0: document-level CV helper ──────────────────────────────────────────
+// Population standard deviation, matching style_vector.py / v6.mjs (divide by N,
+// not N-1). Getting this wrong shifts CV by ~11% at n=5 and can silently move a
+// candidate out of the safety band.
+export function docCv(text) {
+  const lens = String(text || '')
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => (s.match(/[A-Za-z']+/g) || []).length)
+    .filter((n) => n > 0);
+  if (lens.length < 2) return 0;
+  const mean = lens.reduce((a, b) => a + b, 0) / lens.length;
+  if (!mean) return 0;
+  const varr = lens.reduce((a, b) => a + (b - mean) ** 2, 0) / lens.length;
+  return Math.sqrt(varr) / mean;
+}
+
+export function assembleCrossover({ cands, paraStats, cvBand = [0.45, 0.65], log = () => {},
+                                   targetCv = null, lengthPenalty = 0, docWords = null,
+                                   engineBias = {} }) {
   const paras = {};
   const provenance = {};
   const ranked = [...cands].sort((a, b) => (a.risk ?? 9) - (b.risk ?? 9));
   const [bLo, bHi] = cvBand;
   const bandDist = (cv) => (cv <= 0 ? 1 : cv < bLo ? (bLo - cv) / bLo : cv > bHi ? (cv - bHi) / bHi : 0);
+  const nParas = Object.keys(paraStats).length || 1;
+  const paraTargetWords = docWords ? docWords / nParas : null;
+
+  // 10.0: paragraph cost = damage + band distance + optional length + engine bias
+  const cost = (o) => {
+    let c = o.damage + o.bandDist + o.stick * 0.001;
+    if (lengthPenalty > 0 && paraTargetWords) {
+      const ratio = wordCount(o.text) / paraTargetWords;
+      c += lengthPenalty * Math.max(0, ratio - 1.12);
+    }
+    const bias = engineBias[o.engine];
+    if (typeof bias === 'number') c += bias;
+    return c;
+  };
 
   for (const paraIdx of Object.keys(paraStats)) {
     const options = [];
@@ -472,14 +658,16 @@ export function assembleCrossover({ cands, paraStats, cvBand = [0.45, 0.65], log
       if (!st || !(c.paras && c.paras[paraIdx])) continue;
       options.push({
         candId: c.id,
+        engine: c.engine || 'hz',
         text: c.paras[paraIdx],
         damage: st.damage,
         bandDist: bandDist(st.cv),
+        paraCv: st.cv,
         stick: ranked.findIndex((r) => r.id === c.id),
       });
     }
     if (!options.length) continue;
-    options.sort((a, b) => (a.damage - b.damage) || (a.bandDist - b.bandDist) || (a.stick - b.stick));
+    options.sort((a, b) => (cost(a) - cost(b)) || (a.stick - b.stick));
     let pick = options[0];
     // stickiness: if the globally best candidate's paragraph is essentially as
     // good (damage within 0.02, band distance within 0.05), keep one voice.
@@ -492,7 +680,109 @@ export function assembleCrossover({ cands, paraStats, cvBand = [0.45, 0.65], log
     paras[paraIdx] = pick.text;
     provenance[paraIdx] = pick.candId;
   }
+
+  // 10.0: after per-paragraph selection, lift the document CV toward targetCv.
+  // Measured on the S4 document: per-paragraph picks alone reached CV 0.465,
+  // which is already enough for the new engine family (Turnitin <20%), but a
+  // document that lands lower benefits from swapping in burstier paragraphs.
+  if (targetCv) {
+    const joined = () => Object.keys(paraStats).map((k) => paras[k] || '').join(' ');
+    let cur = docCv(joined());
+    let swaps = 0;
+    if (cur < targetCv) {
+      const order = Object.keys(paraStats).sort((a, b) => (docCv(paras[a] || '') - docCv(paras[b] || '')));
+      for (const paraIdx of order) {
+        if (cur >= targetCv) break;
+        const alts = [];
+        for (const c of cands) {
+          const st = paraStats[paraIdx]?.find((x) => x.candId === c.id);
+          if (!st || !(c.paras && c.paras[paraIdx])) continue;
+          if (c.paras[paraIdx] === paras[paraIdx]) continue;
+          alts.push({ candId: c.id, text: c.paras[paraIdx], damage: st.damage, paraCv: st.cv });
+        }
+        alts.sort((a, b) => b.paraCv - a.paraCv);
+        for (const alt of alts) {
+          if (alt.damage > 0.05) break;         // never buy CV with broken grammar
+          const prev = paras[paraIdx];
+          const prevProv = provenance[paraIdx];
+          paras[paraIdx] = alt.text;
+          provenance[paraIdx] = alt.candId;
+          const next = docCv(joined());
+          if (next > cur) {
+            cur = next;
+            swaps++;
+            if (next >= targetCv) break;
+          } else {
+            paras[paraIdx] = prev;
+            provenance[paraIdx] = prevProv;
+          }
+        }
+      }
+      log(`[crossover] CV lift: target=${targetCv} final=${cur.toFixed(3)} swaps=${swaps}`);
+    }
+  }
+
   return { paras, provenance };
+}
+
+// ── 10.0: quality axis ──────────────────────────────────────────────────────
+// The S4 acceptance test passed the score axis (<20% AI / 6% similarity /
+// 0 flags) while shipping 11 reader-visible grammar errors. Score alone is not
+// acceptance, so every delivery now reports both axes.
+//
+// Hard errors here mirror l2_fix.py grammar_damage(): a sentence with no
+// terminal punctuation, or (6+ words) no finite-verb-like token.
+// Sentences under 6 words are usually citations ("Li et al. (2015)") and are
+// exempt from the verb check.
+const FINITE_RE = /\b(am|is|are|was|were|be|been|being|has|have|had|do|does|did|can|could|will|would|shall|should|may|might|must|\w+ed|\w+s)\b/i;
+// Only pronoun/auxiliary contractions count. Possessives ("today's",
+// "consumer's") share the apostrophe-s shape and must not inflate the rate.
+const CONTRACTION_RE = new RegExp([
+  String.raw`\b(?:it|that|there|what|who|here|let|he|she|this|these|those)'s\b`,
+  String.raw`\b(?:do|does|did|is|are|was|were|ca|wo|would|should|must|have|has|had|could)n't\b`,
+  String.raw`\b(?:i|you|we|they|he|she|it|that|who|what|there)'re\b`,
+  String.raw`\b(?:i|you|we|they|he|she|it)'ll\b`,
+  String.raw`\b(?:i|you|we|they|he|she|it|that|who|there)'ve\b`,
+  String.raw`\b(?:i|you|we|they|he|she|it)'d\b`,
+  String.raw`\bcan't\b`,
+].join('|'), 'gi');
+
+export function qualityAxis(prose, originalProse, { lang = 'en' } = {}) {
+  // splitSentences() returns [{text,start,end}], not strings.
+  const sents = splitSentences(prose, lang)
+    .map((s) => (typeof s === 'string' ? s : s.text))
+    .map((s) => String(s).trim())
+    .filter(Boolean);
+  const noTerminal = sents.filter((s) => !/[.!?]["')\]]?$/.test(s)).length;
+  const noFiniteVerb = sents.filter(
+    (s) => s.split(/\s+/).length >= 6 && !FINITE_RE.test(s)).length;
+  const words = wordCount(prose);
+  const origWords = wordCount(originalProse) || 1;
+  const contractions = (prose.match(CONTRACTION_RE) || []).length;
+  return {
+    sentences: sents.length,
+    hardErrors: noTerminal + noFiniteVerb,
+    noTerminal,
+    noFiniteVerb,
+    words,
+    origWords,
+    lengthRatio: Number((words / origWords).toFixed(3)),
+    contractionRate: Number((words ? contractions * 100 / words : 0).toFixed(2)),
+  };
+}
+
+// Pass/fail for the quality axis. Thresholds are deliberately loose on length
+// (clients accept ±12%) and strict on grammar (a reader-visible error is a
+// refund risk, a long sentence is not).
+export function qualityVerdict(q, { maxLengthRatio = 1.12, maxContractions = 0.2,
+                                    allowContractions = false } = {}) {
+  const fails = [];
+  if (q.hardErrors > 0) fails.push(`grammar:${q.hardErrors}`);
+  if (q.lengthRatio > maxLengthRatio) fails.push(`length:${q.lengthRatio}`);
+  if (!allowContractions && q.contractionRate > maxContractions) {
+    fails.push(`contractions:${q.contractionRate}`);
+  }
+  return { pass: fails.length === 0, fails };
 }
 
 // ── 7.1: mechanical polish ──────────────────────────────────────────────────

@@ -12,7 +12,7 @@
  "grind": {
   "_desc": "8.0：essay 選定候選 gen>genGate 時自動段級研磨（整份分數改善＋傷率帶內才採用，否則回退）。form 模式一律跳過。rounds=5：實測正式語域段（p6 類）常在第 3 輪後才鬆動。",
   "enabled": true,
-  "genGate": 0.10,
+  "genGate": 0.1,
   "rounds": 5,
   "worst": 3,
   "gain": 0.02
@@ -99,5 +99,15 @@
   "minEntail": 0.6
  },
  "editLensDeltaAdvisory": 0.1,
- "polishCvRetention": 1.0
+ "polishCvRetention": 1.0,
+ "thresholds": {
+  "_note": "10.0 (ARCH10=1 才生效)。targetCv 為新引擎族 CV 下限；實測 CV 0.465 → Turnitin <20%，故 0.42 為安全線。",
+  "targetCv": 0.42,
+  "lengthPenalty": 1.5,
+  "engineBias": {
+   "hz": 0.0,
+   "routeb": 0.0,
+   "routea": 0.05
+  }
+ }
 }

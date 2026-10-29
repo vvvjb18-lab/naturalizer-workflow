@@ -19,3 +19,21 @@ models/
 *.gguf
 
 pipeline/models/
+
+# 10.0 — local secrets and generated test artifacts (never commit)
+finetune/.env.backtrans
+finetune/_*.txt
+finetune/_*.json
+finetune/_*.pdf
+finetune/_*.out
+finetune/_*.err
+finetune/_*.log
+finetune/*.pdf
+finetune/pairs_ext.jsonl
+finetune/routeA_pairs.jsonl
+finetune/routeB_sft.jsonl
+finetune/jobs.jsonl
+finetune/backtrans_api/
+finetune/backtrans_api.bak_before_salvage/
+finetune/ARGON_BRIEF_v*.md
+finetune/argon-attachments/

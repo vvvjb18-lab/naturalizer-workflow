@@ -23,7 +23,7 @@ import {
   grammarScores, nliPairs, scoreFiles, closeDetector,
   detectDocType, surgicalRepair, assembleCrossover, shouldStopEarly,
   mechanicalPolish, applyWordBudget, scoreTexts, citationConsistency, cloakNumbers, completeUnit, validateUnit, mechanicalBurstify,
-  burstifyCandidate, cvOf,
+  burstifyCandidate, cvOf, qualityAxis, qualityVerdict, unloadEngine, ENGINES,
 } from './candidates.mjs';
 import { grindParas, rescueContradictions, similarityPolish, styleGuard as styleGuardText, repetitionReorg } from './grind.mjs';
 import { createLedger, diffSummary } from './ledger.mjs';
@@ -124,6 +124,20 @@ async function main() {
   if (args.help || !args._.length) { console.log(HELP); process.exit(args.help ? 0 : 1); }
 
   const cfg = JSON.parse(fs.readFileSync(path.join(HERE, 'v6.config.json'), 'utf8'));
+  // 10.0 thresholds only apply when ARCH10=1; without it the risk card and
+  // crossover behave exactly as in 9.0.
+  const ARCH10 = process.env.ARCH10 === '1';
+  const ARCH10_CONFIG = ARCH10 ? {
+    targetCv: cfg.thresholds?.targetCv ?? null,
+    lengthPenalty: cfg.thresholds?.lengthPenalty ?? 0,
+    engineBias: cfg.thresholds?.engineBias ?? {},
+    maxLengthRatio: cfg.thresholds?.maxLengthRatio ?? 1.12,
+    allowContractions: cfg.thresholds?.allowContractions ?? false,
+  } : {
+    targetCv: null, lengthPenalty: 0, engineBias: {},
+    maxLengthRatio: Number.POSITIVE_INFINITY, allowContractions: true,
+  };
+  if (ARCH10) console.log(`  10.0 模式：targetCv=${ARCH10_CONFIG.targetCv ?? '—'} · lengthPenalty=${ARCH10_CONFIG.lengthPenalty}`);
   if (args.k.target) cfg.target = String(args.k.target);
   if (args.k.candidates) {
     const n = Math.max(1, parseInt(args.k.candidates, 10));
@@ -508,11 +522,23 @@ async function main() {
       ? false
       : candidates.length >= (cfg.adaptiveFirst ?? 3)
         && shouldStopEarly(candidates, { formMode: docType.form, target: cfg.target, cvBand: cfg.filters.cvBand, genGate: gc.genGate });
+    // 10.0: engine schedule. Without ARCH10 every slot is hz (9.0 behaviour).
+    // With it, slots alternate across the fine-tuned engines so the pool holds
+    // both voices; the model is unloaded when the slot changes engine.
+    const schedule = ARCH10
+      ? Array.from({ length: candidatesN }, (_, i) =>
+          (process.env.ARCH10_POOL || 'routeb,routeb,routea,routeb,routea,routeb')
+            .split(',').map((x) => x.trim()).filter(Boolean)[i % 6] || 'routeb')
+      : Array(candidatesN).fill('hz');
+    if (ARCH10) console.log(`  10.0 引擎排程：${schedule.join(' → ')}`);
+
     for (let k = 0; k < candidatesN; k++) {
+      const engine = schedule[k] || 'hz';
       const sampling = cfg.samplings[k] || { temperature: 1.0, topP: 0.95 };
-      console.log(`  candidate ${k + 1}/${cfg.candidates} (temp ${sampling.temperature}, top_p ${sampling.topP})`);
+      if (k > 0 && engine !== schedule[k - 1]) await unloadEngine(schedule[k - 1]);
+      console.log(`  candidate ${k + 1}/${cfg.candidates} [${engine}] (temp ${sampling.temperature}, top_p ${sampling.topP})`);
       const gen = await generateCandidate({
-        plan, sampling, retries: cfg.unitRetries ?? 2, lang, styleGuide,
+        plan, sampling, retries: cfg.unitRetries ?? 2, lang, styleGuide, engine,
         log: (m) => console.log(`    ${m}`),
       });
       const prose = Object.keys(gen.paras).length
@@ -522,7 +548,7 @@ async function main() {
       fs.writeFileSync(prosePath, prose + '\n', 'utf8');
       const stats = candidateStats({ originalProse, prose, lang });
       stats.coverage = gen.coverage;
-      const c = { id: k + 1, sampling, prosePath, prose, stats, failures: gen.failures, paras: gen.paras };
+      const c = { id: k + 1, engine, sampling, prosePath, prose, stats, failures: gen.failures, paras: gen.paras };
       c.grammarDamagePre = await damageOf(prose);
       // 8.1: score during generation so the early-stop can gate on gen
       const [earlyScore] = await scoreTexts([prose]);
@@ -672,7 +698,18 @@ async function main() {
       if (poolOk.length >= 2) {
         const rankAll = rankCandidates(candidates, { weights: cfg.weights, filters: { ...cfg.filters, formMode: docType.form } });
         const paraStats = await paraStatsFor(poolOk);
-        const xo = assembleCrossover({ cands: poolOk, paraStats, cvBand: cfg.filters.cvBand });
+        // 10.0: new-engine CV floor + length penalty. Gated behind ARCH10=1 so
+        // the 9.0 path stays byte-identical when the flag is absent.
+        const xo = assembleCrossover({
+          cands: poolOk,
+          paraStats,
+          cvBand: cfg.filters.cvBand,
+          targetCv: ARCH10_CONFIG.targetCv,
+          lengthPenalty: ARCH10_CONFIG.lengthPenalty,
+          docWords: candidateStats({ originalProse, prose: originalProse, lang }).words,
+          engineBias: ARCH10_CONFIG.engineBias,
+          log: (m) => log(m),
+        });
         const prose = targetIdx.map((i) => xo.paras[i]).filter(Boolean).join('\n\n');
         const stats = candidateStats({ originalProse, prose, lang });
         stats.coverage = 1;
@@ -1533,6 +1570,25 @@ async function main() {
       const rep = ledger.report();
       archSection = `\n## 9.0 分層架構（--arch90）\n\n- 路由：**${route?.state || '—'}** —— ${route?.advice || ''}\n- L1 診斷（原稿）：${diag90.issues.length ? diag90.issues.map((x) => `${x.id}〔${x.severity}〕`).join('、') : '無高/中問題'}\n- L3 否決紀錄：${rep.vetoes.length ? rep.vetoes.map((v) => `${v.rule}＠#${v.at}`).join('、') : '無'}\n- 交付否決：${archFinal ? (archFinal.pass ? '全綠 ✓' : `**未過**（${archFinal.vetoes.map((v) => v.rule).join('、')}）`) : '—'}${archRolledBack ? ' · **已回退**' : ''}\n- L2 重複論證重組：${archReorg ? `${archReorg.action}（段對 ${archReorg.pairs ?? 0}，消除 ${archReorg.moves || 0}）` : '—（非 S3 路由）'}\n- L2 骨架存活：${archSkeleton ? (archSkeleton.ok ? '✓' : `✗ ${archSkeleton.problems.join('；')}`) : '—'}\n- L4 帳本：${ledger.file}（${rep.entries} 筆 · 回退點 #${rep.rollbackPoint}）\n`;
     }
+    // 10.0 dual-axis acceptance. The S4 test proved the score axis can pass
+    // while the text still ships reader-visible grammar errors, so the risk card
+    // now reports both axes and states the verdict explicitly.
+    const qa = qualityAxis(chosen.prose || originalProse, originalProse, { lang });
+    const qav = qualityVerdict(qa, {
+      maxLengthRatio: ARCH10_CONFIG.maxLengthRatio,
+      allowContractions: ARCH10_CONFIG.allowContractions,
+    });
+    const qualitySection = `\n## 10.0 雙軌驗收\n\n| 軸 | 指標 | 值 |\n|---|---|---:|\n`
+      + `| 分數 | CV（全篇） | ${fmt(cvOf(chosen.prose || ''), 3)}${ARCH10_CONFIG.targetCv ? `（10.0 目標 ≥ ${ARCH10_CONFIG.targetCv}）` : ''} |\n`
+      + `| 分數 | p_ai_gen | ${fmt(chosen.score?.p_ai_gen)} |\n`
+      + `| 分數 | p_ai_edit | ${fmt(chosen.score?.p_ai_edit)} |\n`
+      + `| 質量 | 語法硬傷 | ${qa.hardErrors}${qa.hardErrors ? `（無句末標點 ${qa.noTerminal} · 無限定動詞 ${qa.noFiniteVerb}）` : ' ✓'} |\n`
+      + `| 質量 | 字數比 | ${qa.lengthRatio}（原 ${qa.origWords} → ${qa.words} 詞） |\n`
+      + `| 質量 | 縮寫率／百詞 | ${qa.contractionRate} |\n`
+      + `\n**${qav.pass ? '兩軸通過 ✓' : `質量軸未過：${qav.fails.join('、')}`}**\n`
+      + (qa.hardErrors ? `\n> 建議：交付前跑 \`python pipeline/l2_fix.py fix <in> <out> en-GB\` 修復語法硬傷（實測不影響 CV 與 ai_mk）。\n` : '');
+    report.qualityAxis = { ...qa, verdict: qav };
+
     const md = `# Workflow 8.1 風險卡
 
 - 生成時間：${report.generatedAt}
@@ -1546,7 +1602,7 @@ async function main() {
 ${rows}
 
 原稿基準：ppl ${fmt(originalScore?.perplexity, 1)} · gen ${fmt(originalScore?.p_ai_gen)} · edit ${fmt(originalScore?.p_ai_edit)} · 語法傷率 ${fmt(origDamage)}
-${budgetStats ? `\n## 字數預算（7.6）\n\n- 上限 ${budgetStats.maxWords}${budgetStats.floorWords != null ? ` · 下限 ${budgetStats.floorWords}` : ''}：**${budgetStats.beforeWords} → ${budgetStats.afterWords} 詞**\n- 刪句 ${budgetStats.deletedSentences}（-${budgetStats.deletedWords} 詞） · 定向壓縮 ${budgetStats.compressedParas} 段${budgetStats.failedCompressions ? ` · 壓縮失敗 ${budgetStats.failedCompressions} 段` : ''}${budgetStats.cutRatio != null ? ` · 削幅 ${(budgetStats.cutRatio * 100).toFixed(0)}%` : ''}\n${budgetStats.cvWarn ? `- ⚠ 壓縮後 CV ${budgetStats.cvWarn} 低於安全帶——建議人工覆核節奏\n` : ''}` : ''}${grindInfo ? `\n## 段級研磨（8.0）\n\n- 動作：**${grindInfo.action === 'applied' ? '採用' : grindInfo.action === 'reverted' ? `回退（${grindInfo.reason}）` : grindInfo.action === 'skipped' ? `跳過（${grindInfo.reason || 'form 模式'}）` : grindInfo.action === 'no-op' ? '無段改善（文本不變）' : '停用'}**\n${grindInfo.preGen != null ? `- 整份 gen：${fmt(grindInfo.preGen)} → ${fmt(grindInfo.postGen)} · 語法傷率：${fmt(grindInfo.postDamage)}\n` : ''}${grindInfo.stats && grindInfo.stats.attempts ? `- 嘗試 ${grindInfo.stats.attempts}＝採用 ${grindInfo.stats.accepted}＋no-gain ${grindInfo.stats.noGain}＋拒收 ${grindInfo.stats.rejected}${grindInfo.stats.failed ? `＋失敗 ${grindInfo.stats.failed}` : ''} · ${grindInfo.stats.roundsRun} 輪\n` : ''}` : ''}${simInfo ? `\n## 查重打磨（8.2）\n\n- 動作：**${simInfo.action === 'applied' ? '採用' : simInfo.action === 'reverted' ? `回退（${simInfo.reason}）` : '無變化'}**\n${simInfo.pplBefore != null ? `- 整份 ppl：${fmt(simInfo.pplBefore, 1)} → ${fmt(simInfo.pplAfter, 1)}（較高＝較少通用措辭）\n` : ''}${simInfo.stats && simInfo.stats.moves && simInfo.stats.moves.length ? `- 改寫句：${simInfo.stats.moves.map((m) => `p${m.para + 1}s${m.sent + 1} ppl ${m.pplBefore}→${m.pplAfter}`).join('、')}\n` : ''}` : ''}${citeCheck && (citeCheck.mismatches.length || citeCheck.checked) ? `\n## 引用一致性（8.2）\n\n- 內文引用 ${citeCheck.checked} 個 · References 條目 ${citeCheck.references} 筆\n${citeCheck.fixes.length ? `- 已自動對齊：${citeCheck.fixes.map((f) => `${f.from} → ${f.to}`).join('、')}\n` : ''}${citeCheck.mismatches.filter((m) => !m.fixed).length ? `- ⚠ 需人工核對：${citeCheck.mismatches.filter((m) => !m.fixed).map((m) => `${m.inText} vs [${m.refYears.join('/')}]`).join('、')}\n` : ''}` : ''}${qFix && qFix.surgeries ? `\n## 二級品質手術（8.2，CoLA < ${qFix.threshold}）\n\n${qFix.list.map((s) => `- 「${s.before}」→「${s.after}」`).join('\n')}\n` : ''}
+${qualitySection}${budgetStats ? `\n## 字數預算（7.6）\n\n- 上限 ${budgetStats.maxWords}${budgetStats.floorWords != null ? ` · 下限 ${budgetStats.floorWords}` : ''}：**${budgetStats.beforeWords} → ${budgetStats.afterWords} 詞**\n- 刪句 ${budgetStats.deletedSentences}（-${budgetStats.deletedWords} 詞） · 定向壓縮 ${budgetStats.compressedParas} 段${budgetStats.failedCompressions ? ` · 壓縮失敗 ${budgetStats.failedCompressions} 段` : ''}${budgetStats.cutRatio != null ? ` · 削幅 ${(budgetStats.cutRatio * 100).toFixed(0)}%` : ''}\n${budgetStats.cvWarn ? `- ⚠ 壓縮後 CV ${budgetStats.cvWarn} 低於安全帶——建議人工覆核節奏\n` : ''}` : ''}${grindInfo ? `\n## 段級研磨（8.0）\n\n- 動作：**${grindInfo.action === 'applied' ? '採用' : grindInfo.action === 'reverted' ? `回退（${grindInfo.reason}）` : grindInfo.action === 'skipped' ? `跳過（${grindInfo.reason || 'form 模式'}）` : grindInfo.action === 'no-op' ? '無段改善（文本不變）' : '停用'}**\n${grindInfo.preGen != null ? `- 整份 gen：${fmt(grindInfo.preGen)} → ${fmt(grindInfo.postGen)} · 語法傷率：${fmt(grindInfo.postDamage)}\n` : ''}${grindInfo.stats && grindInfo.stats.attempts ? `- 嘗試 ${grindInfo.stats.attempts}＝採用 ${grindInfo.stats.accepted}＋no-gain ${grindInfo.stats.noGain}＋拒收 ${grindInfo.stats.rejected}${grindInfo.stats.failed ? `＋失敗 ${grindInfo.stats.failed}` : ''} · ${grindInfo.stats.roundsRun} 輪\n` : ''}` : ''}${simInfo ? `\n## 查重打磨（8.2）\n\n- 動作：**${simInfo.action === 'applied' ? '採用' : simInfo.action === 'reverted' ? `回退（${simInfo.reason}）` : '無變化'}**\n${simInfo.pplBefore != null ? `- 整份 ppl：${fmt(simInfo.pplBefore, 1)} → ${fmt(simInfo.pplAfter, 1)}（較高＝較少通用措辭）\n` : ''}${simInfo.stats && simInfo.stats.moves && simInfo.stats.moves.length ? `- 改寫句：${simInfo.stats.moves.map((m) => `p${m.para + 1}s${m.sent + 1} ppl ${m.pplBefore}→${m.pplAfter}`).join('、')}\n` : ''}` : ''}${citeCheck && (citeCheck.mismatches.length || citeCheck.checked) ? `\n## 引用一致性（8.2）\n\n- 內文引用 ${citeCheck.checked} 個 · References 條目 ${citeCheck.references} 筆\n${citeCheck.fixes.length ? `- 已自動對齊：${citeCheck.fixes.map((f) => `${f.from} → ${f.to}`).join('、')}\n` : ''}${citeCheck.mismatches.filter((m) => !m.fixed).length ? `- ⚠ 需人工核對：${citeCheck.mismatches.filter((m) => !m.fixed).map((m) => `${m.inText} vs [${m.refYears.join('/')}]`).join('、')}\n` : ''}` : ''}${qFix && qFix.surgeries ? `\n## 二級品質手術（8.2，CoLA < ${qFix.threshold}）\n\n${qFix.list.map((s) => `- 「${s.before}」→「${s.after}」`).join('\n')}\n` : ''}
 ${formCheck ? `\n## form 檢查\n\n引用 ${formCheck.citations} 個 / 數字 ${formCheck.numbers} 個：${formCheck.missingCitations.length || formCheck.missingNumbers.length ? `**缺 ${formCheck.missingCitations.length} 引用、${formCheck.missingNumbers.length} 數字，需人工核對**` : '全數保留 ✓'}\n` : ''}${arch90 ? archSection : ''}${anchorGate ? renderAnchorSection(anchorGate) : ''}
 ## A → B
 
