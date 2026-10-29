@@ -373,6 +373,8 @@ python pipeline/register.py draft.txt
 | **雙軌驗收** | CV **0.558**、gen 0.041、**語法硬傷 0**、字數比 **1.005**（551→554） |
 | 結論 | **兩軸通過 ✓** |
 | 交付 | `final8.0.docx` |
+| **真碼（Turnitin）** | **AI 0%** / 查重 18%（Internet 10% + Publications 8%）/ **0 flags** |
+| Submission ID | `trn:oid:::26334:318623574` |
 
 ### 12.3 但暴露了一個關鍵限制
 
