@@ -55,6 +55,7 @@ const xo = assembleCrossover({
   targetCv: 0.42, lengthPenalty: 1.5,
   docWords: original.split(/\s+/).length,
   engineBias: { routea: 0.05 },
+  lengthConverge: { maxWords: Math.round(original.split(/\s+/).length * 1.12), minCv: 0.42 },
   log: (m) => console.log(m),
 });
 const assembled = Object.keys(plan.targets).map((k) => xo.paras[k]).filter(Boolean).join('\n\n');

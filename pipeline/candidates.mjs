@@ -630,7 +630,7 @@ export function docCv(text) {
 
 export function assembleCrossover({ cands, paraStats, cvBand = [0.45, 0.65], log = () => {},
                                    targetCv = null, lengthPenalty = 0, docWords = null,
-                                   engineBias = {} }) {
+                                   engineBias = {}, lengthConverge = {} }) {
   const paras = {};
   const provenance = {};
   const ranked = [...cands].sort((a, b) => (a.risk ?? 9) - (b.risk ?? 9));
@@ -719,6 +719,53 @@ export function assembleCrossover({ cands, paraStats, cvBand = [0.45, 0.65], log
         }
       }
       log(`[crossover] CV lift: target=${targetCv} final=${cur.toFixed(3)} swaps=${swaps}`);
+    }
+  }
+
+  // 10.0: length convergence. Every route-B candidate overshoots (measured
+  // 1.22–1.36 on long paragraphs), so per-paragraph scoring cannot fix it when
+  // ALL candidates are long. Here we swap in shorter alternatives — pure
+  // selection, no text rewriting — until the document fits maxWords.
+  // minCv stops the shrinks from destroying the burstiness we just bought.
+  const { maxWords = null, minCv = null } = lengthConverge || {};
+  if (maxWords) {
+    const joined = () => Object.keys(paraStats).map((k) => paras[k] || '').join(' ');
+    let words = wordCount(joined());
+    let shrinks = 0;
+    if (words > maxWords) {
+      const order = Object.keys(paraStats)
+        .sort((a, b) => wordCount(paras[b] || '') - wordCount(paras[a] || ''));
+      for (const paraIdx of order) {
+        if (words <= maxWords) break;
+        const alts = [];
+        for (const c of cands) {
+          const st = paraStats[paraIdx]?.find((x) => x.candId === c.id);
+          if (!st || !(c.paras && c.paras[paraIdx])) continue;
+          if (c.paras[paraIdx] === paras[paraIdx]) continue;
+          alts.push({ candId: c.id, text: c.paras[paraIdx], damage: st.damage,
+                      words: wordCount(c.paras[paraIdx]) });
+        }
+        alts.sort((a, b) => a.words - b.words);
+        for (const alt of alts) {
+          if (alt.damage > 0.05) continue;
+          if (alt.words >= wordCount(paras[paraIdx])) break;
+          const prev = paras[paraIdx];
+          const prevProv = provenance[paraIdx];
+          paras[paraIdx] = alt.text;
+          provenance[paraIdx] = alt.candId;
+          const next = wordCount(joined());
+          const cvOk = minCv == null || docCv(joined()) >= minCv;
+          if (next < words && cvOk) {
+            words = next;
+            shrinks++;
+            if (words <= maxWords) break;
+          } else {
+            paras[paraIdx] = prev;
+            provenance[paraIdx] = prevProv;
+          }
+        }
+      }
+      log(`[crossover] length: max=${maxWords} final=${words} shrinks=${shrinks}`);
     }
   }
 

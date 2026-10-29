@@ -700,14 +700,21 @@ async function main() {
         const paraStats = await paraStatsFor(poolOk);
         // 10.0: new-engine CV floor + length penalty. Gated behind ARCH10=1 so
         // the 9.0 path stays byte-identical when the flag is absent.
+        const origWC = candidateStats({ originalProse, prose: originalProse, lang }).words;
         const xo = assembleCrossover({
           cands: poolOk,
           paraStats,
           cvBand: cfg.filters.cvBand,
           targetCv: ARCH10_CONFIG.targetCv,
           lengthPenalty: ARCH10_CONFIG.lengthPenalty,
-          docWords: candidateStats({ originalProse, prose: originalProse, lang }).words,
+          docWords: origWC,
           engineBias: ARCH10_CONFIG.engineBias,
+          // 10.0: swap in shorter candidates until the document fits. Pure
+          // selection — no text rewriting, so CV/ai_mk of each paragraph stand.
+          lengthConverge: ARCH10 && ARCH10_CONFIG.targetCv
+            ? { maxWords: Math.round(origWC * ARCH10_CONFIG.maxLengthRatio),
+                minCv: ARCH10_CONFIG.targetCv }
+            : {},
           log: (m) => log(m),
         });
         const prose = targetIdx.map((i) => xo.paras[i]).filter(Boolean).join('\n\n');
