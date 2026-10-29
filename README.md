@@ -42,7 +42,7 @@ scripts\setup.bat        # 檢查 Node/Python、裝依賴、探測模型服務
 scripts\start-all.cmd    # 啟動 WebUI → http://127.0.0.1:8790
 ```
 
-**模型後端（必需，單獨安裝）**：管線透過 `http://127.0.0.1:8080` 呼叫本地 llama.cpp 服務（Humanizer App 或自架 `llama-server -m <12B GGUF>`）。模型權重與 llama.cpp 二進制不入庫（見 `.gitignore`）。
+**模型後端（必需，單獨安裝）**：管線透過 `http://127.0.0.1:47615`（`HZ_APP_URL` 可覆蓋）呼叫本地 Humanizer App 的 `/api/completion`（Humanizer App 或自架 `llama-server -m <12B GGUF>`）。模型權重與 llama.cpp 二進制不入庫（見 `.gitignore`）。
 
 **離線評分（可選，跑 daemon）**：`python polish/detector_daemon.py`（需要 torch 與對應 detector 權重）。
 
@@ -209,7 +209,7 @@ scripts\start-all.cmd    # 啟動 WebUI → http://127.0.0.1:8790
 | L2 | `argument_map.mjs` | 論證骨架抽取（S3 文檔交付時檢查；本版僅記錄） |
 | L3 | `verify_gates.mjs` | 三環否決（見第 5/7 步） |
 | L4 | `ledger.mjs` | 版本帳本：每階段 before/after＋否決紀錄，支援回退原稿 |
-| L5 | `calibration.json` | 族軸校準：按文檔族查送檢結論（22 點／22 課） |
+| L5 | `calibration.json` | 族軸校準：按文檔族查送檢結論（23 點／23 課；第 23 點為 10.0 新族錨點） |
 
 設計原則：**分層只做守門與記錄，不改寫文本**——改寫仍是 v6 主鏈。預設（無 `--arch90`）行為與 8.18 完全一致。
 
@@ -222,10 +222,11 @@ pipeline/   主鏈與候選生成（v6.mjs、candidates.mjs、grind.mjs、assaul
             9.0 層：router/ledger/diagnostics/verify_gates/anchor_gate/argument_map.mjs、
             docx_bridge.py、shredder.py…）＋ canary 金絲雀 ＋ samples ＋ v6-test/calibration.json
 polish/     修復層（polish.mjs + src/）、LT 安全修復（lt_fix.py）、detector daemon/bridge、
-            skills 合約、test/（43 測試）
+            skills 合約、test/（6 檔 82 個 test()）
 webui/      本地 Web 介面（server.mjs → 127.0.0.1:8790）
 scripts/    一鍵部署（setup.bat、start-all.cmd）
-docs/       WORKFLOW.md 完整版更日誌＋ROADMAP-9.0.md 藍圖
+docs/       WORKFLOW.md（權威技術參考＋2.0→10.0 完整變更記錄）、WORKFLOW-10.0.md（10.0 架構規格）、
+            history/（9 篇開發史）、ROADMAP-9.0.md；入口見 docs/README.md
 evidence/   實測證據包（E2-grind 全套；turnitin-reports/ H2/H4 原件）
 finetune/   9B 微調實驗（pairs_all.jsonl 714 對、QLoRA 訓練腳本、Colab 逐夜訓練器）
 ```
@@ -244,7 +245,7 @@ finetune/   9B 微調實驗（pairs_all.jsonl 714 對、QLoRA 訓練腳本、Col
 | `polish/detector_daemon.py` | 離線評分常駐進程：CoLA 傷率＋tmr gen＋EditLens edit＋GPT-2 ppl |
 | `pipeline/precheck.mjs` | 接單預檢：文檔畫像 → 族分類 → 路徑/耗時/風險預期 |
 
-## 校準結論（22 點／22 課，`pipeline/v6-test/calibration.json`）
+## 校準結論（23 點／23 課，`pipeline/v6-test/calibration.json`）
 
 - gen ≤ 0.05 → Turnitin <20%（三例實測：H2 0.031／H4 0.048／E2-grind 0.030；一鍵 8.1/8.2 復現 0.02/0.034 → 0%）
 - API 潤飾每級 +10–15% Turnitin；gen 0.24+ 一律不予送檢
@@ -252,6 +253,8 @@ finetune/   9B 微調實驗（pairs_all.jsonl 714 對、QLoRA 訓練腳本、Col
 - 雙特徵交付規則（9/9 吻合）：CV ≥ 0.54 → 全過；CV 0.38–0.39 → gen 決定（0.76 過／0.98 敗）；CV ≤ 0.28 → 敗
 - 離線指標（169 特徵）不能回歸預測 Turnitin（MAE 33pp），只能做排序與閘門
 - 能力邊界：有真人底子（gen ≤0.4）全自動 0–3%；純 AI＋高質量＋句構均勻類為 12B 引擎天花板（自動化路徑不存在，見 WORKFLOW「項目開發史與瓶頸回顧」）
+- **新引擎族（10.0，第 23 點）**：CV 0.465＋ai_mk 0.13 → <20%／6%／0 flags；門檻暫定 0.42，膝點（0.40–0.43）未標定；**送檢碼未記錄**（流程缺口）
+- 檢測渠道：turnitai（`26334`）與 OriginCheck（`3532`）兩個帳號池，同文本差 ±3pp；兩渠道都不可預測具體分數，只做閘門
 
 ## 證據包
 
@@ -259,8 +262,8 @@ finetune/   9B 微調實驗（pairs_all.jsonl 714 對、QLoRA 訓練腳本、Col
 |---|---|---|
 | E2-grind（紅區 argumentative） | **0% AI／13% 查重／0 Integrity Flags** | [`evidence/E2-grind/`](evidence/E2-grind/) |
 | H2_ideal / H4_prodLT | **<20%（不顯示數字）×2** | [`evidence/turnitin-reports/`](evidence/turnitin-reports/) |
-| E2 一鍵 8.1 / 8.2 | 0% AI／22%、0% AI／16% | calibration 第 18–19 點 |
-| compare-stores 攻堅（原稿 0.983） | 0.573→**0%**（碼5）＋41%/98% 標定 | calibration 第 20–21 點 |
+| E2 一鍵 8.1 / 8.2 | 0% AI／22%、0% AI／16% | calibration 第 16–17 點 |
+| compare-stores 攻堅（原稿 0.983） | 0.573→**0%**（OriginCheck 碼 XU1M）＋41%（第 20 點）/98%（第 18 點）標定 | calibration 第 18、20、21 點 |
 
 每個證據包含：Turnitin 原件 PDF、三件套 docx（原稿/A 稿/B 稿）、終端 log、校準數據、統一報告 PDF 與其建置腳本 `build_pdf.py`。內容索引見各包內 `MANIFEST.md`。
 

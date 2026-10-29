@@ -280,6 +280,18 @@
    "coverage": 1,
    "pipeline": "v6 --arch90: S2 route -> 4 candidates (1 vetoed) -> NLI chose cand3 -> delivery veto (structureAdditions) -> best-green rollback to cand3 -> mechanical+LT",
    "note": "第22點（2026-10-27，碼 49C86925C8）：9.0 畢業考通過。交付的是『否決環回退鏈』的產物——首選 X 與帶結構污染的文本被攔，回退最佳綠候選。CV 0.544 ≥ 0.54 雙特徵全過線。查重 22% 在 E2 族帶內（13-22%）兼作渠道完整性參照（單碼無法先打金絲雀的取捨）。8.2 引用年份對齊在真實交付生效（內文 2016→2017 與 References 一致——原稿的不一致被修好）。牆鐘 25 分鐘（time-budget 砍研磨；4 候選 hz 偏慢）。"
+  },
+  {
+   "name": "10.0 雙引擎並聯 (B/A/B/A, highAI-0983)",
+   "turnitin": "<20 AI / 6 similarity / 0 flags",
+   "cv": 0.465,
+   "p_ai_gen": null,
+   "p_ai_edit": null,
+   "ppl": null,
+   "words": 811,
+   "coverage": 1,
+   "pipeline": "ARCH10: register router -> parallel pool (routeb x3 + routea x1) -> crossover selection (CV floor 0.42) -> deterministic repair. ai_mk=0.13",
+   "note": "第23點（2026-10-29，turnitai 國際版）：10.0 新引擎族的第一個錨點。原稿 highAI-0983（98% AI）→ B/A/B/A 組合（CV 0.465、ai_mk 0.13、811 詞）→ Turnitin <20% AI（低於閾值不揭露）／查重 6%（Not Cited 4% + Missing Quotations 2%）／0 flags；來源 Publications 4% / Internet 2% / Student Papers 0%。推翻舊族「CV 必須 ≥0.54」假設，新族門檻暫定 0.42。**送檢碼未記錄**（流程缺口）。質量軸同期審計：同文本 11 處讀者可見語法硬傷（NUCLE 特徵），LT 只覆蓋 4/15，自建 15 條規則全修後 CV 0.472→0.474、ai_mk 不變。"
   }
  ],
  "lessons": [
@@ -322,7 +334,8 @@
   {
    "id": 22,
    "lesson": "9.0 畢業考：否決環拒絕了四輪有缺陷的交付（含評估器自身三個誤報類被逐一逼出修復：量詞 one 對稱、half↔50%、引用對齊基準、序數詞 twenty-first↔21st、集合語義），最終交付的回退產物 0% AI／0 flags。『寧可回退也不交付存疑文本』的路線第一次完整走通。"
-  }
+  },
+  "第23課：換引擎改變了所有閾值的適用性。舊族 CV≥0.54 是 hz-12B 的尺；新族（routeb/routea）CV 0.465 即 <20%。族軸不可移植——這是 L5 結論的第二次實證。同時：真碼通過 ≠ 可交付，質量軸必須獨立驗收（11 處硬傷在分數滿分的文本裡）。"
  ],
  "acceptance": {
   "acceptable": "<30",
