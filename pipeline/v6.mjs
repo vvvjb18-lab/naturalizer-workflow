@@ -664,11 +664,23 @@ async function main() {
       const fallbackPool = rejected.filter((c) => (c.stats?.coverage ?? 0) >= 1 && (c.grammarDamage ?? 1) <= (cfg.filters?.maxGrammarDamage ?? 0.08));
       if (fallbackPool.length && !docType.form && cfg.lowCvFallback?.deliver !== false) {
         chosen = fallbackPool.sort((a, b) => (a.score?.p_ai_gen ?? 1) - (b.score?.p_ai_gen ?? 1))[0];
+        // 10.0: state the actual rejection cause. The old string always blamed
+        // CV, but a candidate can also die on copy rate or cvRatio while its CV
+        // sits inside the band (observed: cand CV 0.591 culled by copy=0.86).
+        const bandLoR = (cfg.filters?.cvBand?.[0] ?? 0.45) * 0.9;
+        const cvShort = (chosen.stats?.cv ?? 0) < bandLoR;
+        const reasons = [];
+        if ((chosen.stats?.coverage ?? 0) < (cfg.filters?.minCoverage ?? 1)) reasons.push('coverage 不足');
+        if ((chosen.stats?.cvRatio ?? 1) < (cfg.filters?.minCvRatio ?? 1.1)) reasons.push(`cvRatio ${fmt(chosen.stats.cvRatio, 2)} < ${cfg.filters?.minCvRatio ?? 1.1}`);
+        if ((chosen.stats?.copyRate ?? 0) > (cfg.filters?.maxCopyRate ?? 0.6)) reasons.push(`copy ${fmt(chosen.stats.copyRate, 2)} > ${cfg.filters?.maxCopyRate ?? 0.6}`);
+        if (!reasons.length) reasons.push(cvShort ? 'CV 低於交付線' : '未達硬過濾門檻');
         bandFallback = {
           cv: chosen.stats.cv, band: cfg.filters?.cvBand ?? [0.45, 0.65],
-          reason: 'CV 低於交付線 0.5（九點校準：CV<0.37 實測 41-98%）——burstify 後仍不足',
+          reason: `候選全數被淘汰（${reasons.join('、')}）；交付最佳可用候選`
+            + (cvShort ? '——CV 低於校準帶，未經 Turnitin 驗證' : ''),
+          rejects: reasons,
         };
-        console.log(`⚠ 帶外交付：選 CV/分數最佳的 cand${chosen.id}（CV ${fmt(chosen.stats.cv, 3)} gen ${fmt(chosen.score?.p_ai_gen)}）——此文檔族的 CV 帶未經 Turnitin 校準，交付前請知悉風險`);
+        console.log(`⚠ 降級交付：${reasons.join('、')}——選 cand${chosen.id}（CV ${fmt(chosen.stats.cv, 3)} gen ${fmt(chosen.score?.p_ai_gen)}）`);
       } else if (arch90) {
         // 9.0: even hard filters killed everything — the ledger #0 (deduped
         // original) is deterministic-green by definition; deliver it and let
@@ -1570,7 +1582,6 @@ async function main() {
         anchorGate,
       };
     }
-    fs.writeFileSync(v6Report, JSON.stringify(report, null, 1), 'utf8');
 
     const rows = pool.map((c) => `| ${c.crossover ? 'X' : c.id}${c.crossover ? '（重組）' : ''} | ${(c.stats.coverage * 100).toFixed(0)}% | ${fmt(c.stats.cv, 3)} | ${fmt(c.grammarDamagePre)} | ${fmt(c.grammarDamage)} | ${(c.surgeries || []).length} | ${fmt(c.score?.perplexity, 1)} | ${fmt(c.score?.p_ai_gen)} | ${fmt(c.score?.p_ai_edit)} | ${fmt(c.nli?.maxContradict)} | ${eligible.includes(c) ? fmt(c.risk) : '淘汰'} |`).join('\n');
     if (arch90) {
@@ -1595,11 +1606,13 @@ async function main() {
       + `\n**${qav.pass ? '兩軸通過 ✓' : `質量軸未過：${qav.fails.join('、')}`}**\n`
       + (qa.hardErrors ? `\n> 建議：交付前跑 \`python pipeline/l2_fix.py fix <in> <out> en-GB\` 修復語法硬傷（實測不影響 CV 與 ai_mk）。\n` : '');
     report.qualityAxis = { ...qa, verdict: qav };
+    // write JSON after every report field is populated (10.0)
+    fs.writeFileSync(v6Report, JSON.stringify(report, null, 1), 'utf8');
 
     const md = `# Workflow 8.1 風險卡
 
 - 生成時間：${report.generatedAt}
-- 原稿：${input} · 語言 ${lang} · 型別 **${docType.form ? 'form／模板（V2 配方）' : 'essay（CV 帶）'}**${bandFallback ? `\n- ⚠ **帶外交付**：${bandFallback.reason}——CV ${fmt(bandFallback.cv, 3)} 低於校準帶 ${fmt(bandFallback.band[0], 2)}–${fmt(bandFallback.band[1], 2)}，此文檔族未經 Turnitin 驗證，建議先送檢一次確認再批量` : ''}
+- 原稿：${input} · 語言 ${lang} · 型別 **${docType.form ? 'form／模板（V2 配方）' : 'essay（CV 帶）'}**${bandFallback ? `\n- ⚠ **降級交付**：${bandFallback.reason}（成品 CV ${fmt(bandFallback.cv, 3)}，校準帶 ${fmt(bandFallback.band[0], 2)}–${fmt(bandFallback.band[1], 2)}）——建議先送檢一次確認再批量` : ''}
 - 候選 ${candidates.length}${assembled ? ' + 重組 X' : ''} · 手術 ${pool.reduce((n, c) => n + (c.surgeries || []).length, 0)} 處 · 選定 **${chosen.crossover ? '重組 X' : `cand${chosen.id}`}${chosen.crossover ? `（逐段取自 cand{${Object.values(chosen.provenance).join(',')}}）` : ''}**
 
 ## 候選對照

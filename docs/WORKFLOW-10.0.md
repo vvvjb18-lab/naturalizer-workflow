@@ -349,3 +349,94 @@ python pipeline/l2_fix.py check in.txt
 python pipeline/register.py draft.txt
 ```
 
+
+---
+
+## 十二、首次完整全鏈實測（2026-10-29，ARCH10=1）
+
+### 12.1 執行條件
+
+| 項目 | 值 |
+|---|---|
+| 輸入 | `e2-oneclick82.docx`（664 詞，11 段，E2 論文的原始草稿） |
+| 模式 | `ARCH10=1`，引擎排程 routeb×4 + routea×2 |
+| 環境 | hz app（47615）+ Ollama（11434）+ detector daemon |
+| 耗時 | **762 秒（12.7 分鐘）** |
+
+### 12.2 結果
+
+| 階段 | 結果 |
+|---|---|
+| plan | 6 段 6 unit，標題保護 p0，references 4 段保留 |
+| 候選生成 | 4/6（早停），coverage 60–100% |
+| 選定 | cand1（候選 3，routea） |
+| **雙軌驗收** | CV **0.558**、gen 0.041、**語法硬傷 0**、字數比 **1.005**（551→554） |
+| 結論 | **兩軸通過 ✓** |
+| 交付 | `final8.0.docx` |
+
+### 12.3 但暴露了一個關鍵限制
+
+**4 個候選全部被硬過濾淘汰**：
+
+```
+cand1 淘汰（CV=0.463 cvRatio=0.79 coverage=0.60）
+cand2 淘汰（CV=0.465 cvRatio=0.79 coverage=0.80）
+cand3 淘汰（CV=0.596 cvRatio=1.01 coverage=0.80）
+cand4 淘汰（CV=0.591 cvRatio=1.01 coverage=1.00）  copy=0.86
+```
+
+最终走的是 `bandFallback`（降级交付），不是正常择优。
+
+### 12.4 根因：两颗新引擎都不适合「已有人类底子」的文档
+
+E2 原稿的 `gen` 已经是 **0.036**（本来就很少 AI 味），所以：
+
+| 引擎 | 行为 | 后果 |
+|---|---|---|
+| **routeb** | 判定「已经像人写的」→ **原样返回** | `returned the original` → coverage 不足、**copy rate 0.79–0.86** |
+| **routea** | 愿意改写，但**会丢引用** | `drops citation (Colchero et al., 2017)` → coverage 不足 |
+
+两条路都触发硬过滤：
+- `minCvRatio: 1.1`（新文 CV 必须达到原稿的 1.1 倍）
+- `maxCopyRate: 0.6`（复制率上限）
+
+### 12.5 这验证了 L0 路由的必要性
+
+**10.0 的并联池只适用于 S4 类（高 AI 率）文档。**
+
+对 S1/S2（已有人类底子）：
+- 本来就该「少改」（9.0 的保守编辑路径）
+- 让两颗改写器去动它，反而制造 coverage/copy 问题
+
+这正是 `register.py` 四特征路由要解决的问题，但 `v6.mjs` **还没接上**。
+
+### 12.6 待接入的路由逻辑
+
+```text
+if (gen <= 0.10 && cv >= 0.50) {
+    // S1：保守编辑，不走候选池
+    path = 'conservative'   // 只跑 LT + l2_fix + 格式检查
+} else if (register === 'academic' && gen > 0.85) {
+    // S4：并联池
+    path = 'beta'
+} else {
+    // S2/S3：并联池但放宽 copy 阈值
+    path = 'alpha' / 'gamma'
+}
+```
+
+**下一步**：把 `register.py` 的特征计算搬进 `precheck.mjs`，
+在 `v6.mjs` 的候选生成前做分流。
+
+### 12.7 本次顺带修掉的两个报告 bug
+
+1. **`bandFallback.reason` 硬编码**「CV 低于交付线」——实际 cand4 是因为
+   copy rate 0.86 被淘汰（CV 0.591 在带内）。已改为按实际淘汰原因生成。
+2. **JSON 里 `qualityAxis: null`**——赋值写在 `writeFileSync` 之后。
+   已把 JSON 写入移到所有字段填充完成之后。
+
+### 12.8 一个仍然存在的可观测性缺口
+
+`rankCandidates` 的淘汰日志只显示 `damage / CV / cvRatio / coverage`，
+**不显示 copyRate**，而 copy rate 正是本次淘汰的主因。建议补上。
+
