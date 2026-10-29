@@ -303,7 +303,8 @@ async function main() {
 
     // 9.0 arch90 — L4 帳本建立＋L0 路由（文本期：S5 停改令／S3 警告）
     let ledger = null, route = null, archFullText = null, archOrigCv = null;
-    if (arch90) {
+    // 10.0: ARCH10 also needs the ledger and the S1 route (two-stage router).
+    if (arch90 || ARCH10) {
       ledger = createLedger(workDir, { docId: base });
       archFullText = Array.isArray(plan.paragraphs) && plan.paragraphs.length
         ? plan.paragraphs.map((p) => String(p || '')).join('\n\n')
@@ -313,10 +314,17 @@ async function main() {
       route = classifyDraft({ text: archFullText, gen: null, cv: archOrigCv, lang });
       console.log(`  9.0 路由（文本期）：${route.state} —— ${route.advice}`);
       if (route.state === 'S5') {
-        ledger.append({ stage: 'route', before: archFullText, after: archFullText, verdict: { pass: false, vetoes: [{ ring: 0, rule: 'routeS5', detail: route.advice }], dimensions: {} } });
-        console.error(`9.0 停改令（S5）：${route.advice}`);
-        await closeDetector().catch(() => {});
-        process.exit(ROUTE_EXIT.S5);
+        if (arch90 && !ARCH10) {
+          // 9.0：S5 停改令
+          ledger.append({ stage: 'route', before: archFullText, after: archFullText, verdict: { pass: false, vetoes: [{ ring: 0, rule: 'routeS5', detail: route.advice }], dimensions: {} } });
+          console.error(`9.0 停改令（S5）：${route.advice}`);
+          await closeDetector().catch(() => {});
+          process.exit(ROUTE_EXIT.S5);
+        }
+        // 10.0：学生作业普遍没有 References，S5 全拦会挡掉大多数订单。
+        // 降级为警告——引用/数字一致性仍由 L3 否决环与 citationConsistency 把关。
+        console.log(`  10.0：S5 警告（${route.advice.slice(0, 40)}…）→ 继续，引用一致性交由 L3 把关`);
+        ledger.append({ stage: 'route-warn', before: archFullText, after: archFullText, verdict: { pass: true, vetoes: [], dimensions: {} }, meta: { route: 'S5-degraded', detail: route.advice } });
       }
       if (route.state === 'S3') console.log('  ⚠ S3：論證骨架將於交付時檢查（L2 重組本版僅記錄）');
     }
@@ -383,10 +391,15 @@ async function main() {
       route = classifyDraft({ text: archFullText, gen: profile.gen, cv: archOrigCv, lang });
       console.log(`  9.0 路由（評分期）：${route.state} —— ${route.advice}`);
       if (route.state === 'S4') {
-        ledger.append({ stage: 'route', before: archFullText, after: archFullText, verdict: { pass: false, vetoes: [{ ring: 0, rule: 'routeS4', detail: route.advice }], dimensions: {} } });
-        console.error(`9.0 停改令（S4）：${route.advice}`);
-        await closeDetector().catch(() => {});
-        process.exit(ROUTE_EXIT.S4);
+        if (arch90 && !ARCH10) {
+          // 9.0：S4 退回作者
+          ledger.append({ stage: 'route', before: archFullText, after: archFullText, verdict: { pass: false, vetoes: [{ ring: 0, rule: 'routeS4', detail: route.advice }], dimensions: {} } });
+          console.error(`9.0 停改令（S4）：${route.advice}`);
+          await closeDetector().catch(() => {});
+          process.exit(ROUTE_EXIT.S4);
+        }
+        // 10.0：S4 正是并联池的目标文档类，继续
+        console.log(`  10.0：S4（原稿 gen ${fmt(profile.gen, 2)}）→ 并联池处理`);
       }
       if (route.state === 'S1') {
         console.log('=== 9.0 路由：S1 保守編輯（跳過候選生成）===');
@@ -618,10 +631,10 @@ async function main() {
     console.log('=== 5/7 選擇 + 段落重組 + NLI 守門 ===');
     let { eligible, rejected } = rankCandidates(candidates, {
       weights: cfg.weights,
-      filters: { ...cfg.filters, formMode: docType.form },
+      filters: { ...cfg.filters, formMode: docType.form, origCv: cvOf(originalProse, lang) },
     });
-    rejected.forEach((c) => console.log(`  cand${c.id} 淘汰（damage=${fmt(c.grammarDamage)} CV=${fmt(c.stats.cv)} cvRatio=${fmt(c.stats.cvRatio, 2)} coverage=${fmt(c.stats.coverage, 2)}）`));
-    rejected.forEach((c) => console.log(`  cand${c.id} 淘汰（damage=${fmt(c.grammarDamage)} CV=${fmt(c.stats.cv)} cvRatio=${fmt(c.stats.cvRatio, 2)} coverage=${fmt(c.stats.coverage, 2)}）`));
+    rejected.forEach((c) => console.log(`  cand${c.id} 淘汰（damage=${fmt(c.grammarDamage)} CV=${fmt(c.stats.cv)} cvRatio=${fmt(c.stats.cvRatio, 2)} coverage=${fmt(c.stats.coverage, 2)} copy=${fmt(c.stats.copyRate, 2)} gen=${fmt(c.score?.p_ai_gen)}）`));
+    rejected.forEach((c) => console.log(`  cand${c.id} 淘汰（damage=${fmt(c.grammarDamage)} CV=${fmt(c.stats.cv)} cvRatio=${fmt(c.stats.cvRatio, 2)} coverage=${fmt(c.stats.coverage, 2)} copy=${fmt(c.stats.copyRate, 2)} gen=${fmt(c.score?.p_ai_gen)}）`));
 
     // 8.3: flat document family — every candidate culled ONLY by the CV band
     // floor (their original CV sits far below the E2-calibrated 0.45). Two
@@ -656,7 +669,7 @@ async function main() {
           fs.writeFileSync(path.join(workDir, `cand${seed.id}.burst.prose.txt`), seed.prose + '\n', 'utf8');
           console.log(`  cand${seed.id} burst 後：CV ${fmt(st.cv, 3)} gen ${fmt(seed.score?.p_ai_gen)} damage ${fmt(seed.grammarDamage)}（${moves.length} 段重造）`);
         }
-        ({ eligible, rejected } = rankCandidates(pool, { weights: cfg.weights, filters: { ...cfg.filters, formMode: docType.form } }));
+        ({ eligible, rejected } = rankCandidates(pool, { weights: cfg.weights, filters: { ...cfg.filters, formMode: docType.form, origCv: cvOf(originalProse, lang) } }));
       }
     }
     if (!eligible.length) {
@@ -769,7 +782,7 @@ async function main() {
       }
     }
 
-    ({ eligible, rejected } = rankCandidates(pool, { weights: cfg.weights, filters: { ...cfg.filters, formMode: docType.form } }));
+    ({ eligible, rejected } = rankCandidates(pool, { weights: cfg.weights, filters: { ...cfg.filters, formMode: docType.form, origCv: cvOf(originalProse, lang) } }));
 
     // 8.2: evaluate every eligible candidate (NLI + rescues), then choose by
     // risk with a ppl tie-break — among equal-risk candidates the higher

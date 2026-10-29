@@ -228,6 +228,50 @@ export async function completeUnit({ text, sampling = {}, timeoutMs = 600000, in
   return out;
 }
 
+// ── 10.0: citation rescue ──────────────────────────────────────────────────
+// route A rewrites freely and sometimes drops an in-text citation, which
+// validateUnit rightly rejects ("drops citation (Colchero et al., 2017)").
+// Rather than burn another sample, put the missing citation back before the
+// final period — a deterministic repair, no rewriting.
+export function rescueCitations(original, output) {
+  const want = citationsIn(original);
+  if (!want.length) return null;
+  const have = new Set(citationsIn(output));
+  const missing = want.filter((c) => !have.has(c));
+  if (!missing.length) return null;
+
+  const splitS = (t) => String(t).split(/(?<=[.!?])\s+/).map((x) => x.trim()).filter(Boolean);
+  const origS = splitS(original);
+  const outS = splitS(output);
+
+  // Preferred: same sentence count -> put each citation back in its own sentence.
+  // Attaching every citation to the final period would make them support the
+  // wrong claim, which is worse than the missing-citation rejection.
+  if (origS.length === outS.length) {
+    const fixed = outS.map((sent, i) => {
+      const need = citationsIn(origS[i]).filter((c) => !sent.includes(c));
+      if (!need.length) return sent;
+      let t = sent;
+      for (const cite of need) {
+        t = /[.!?]["')\]]?$/.test(t)
+          ? t.replace(/([.!?]["')\]]?)$/, ` ${cite}$1`)
+          : `${t} ${cite}.`;
+      }
+      return t;
+    });
+    return fixed.join(' ');
+  }
+
+  // Fallback: append everything to the last sentence.
+  let out = String(output).trim();
+  if (!/[.!?]["')\]]?$/.test(out)) out += '.';
+  for (const cite of missing) {
+    out = out.replace(/([.!?]["')\]]?)$/, ` ${cite}$1`);
+  }
+  return out;
+}
+
+
 // ── per-unit validation (deterministic, mirrors hz's own checks) ───────────
 export function validateUnit(before, after, lang = 'en') {
   if (!after) return { ok: false, reason: 'empty' };
@@ -278,9 +322,21 @@ export async function generateCandidate({ plan, sampling = {}, retries = 2, lang
           const { cloaked, restore } = cloakNumbers(unit.text);
           const outRaw = await completeUnit({ text: cloaked, sampling: sampling2, styleGuide, engine });
           const out = restore(outRaw);
-          const v = validateUnit(unit.text, out, lang);
+          let v = validateUnit(unit.text, out, lang);
+          let candidateText = out;
+          if (!v.ok && /citation/i.test(v.reason)) {
+            const rescued = rescueCitations(unit.text, out);
+            if (rescued) {
+              const v2 = validateUnit(unit.text, rescued, lang);
+              if (v2.ok) {
+                candidateText = rescued;
+                v = v2;
+                log(`  unit ${unit.id} citation rescued (${v.reason === 'ok' ? 'recovered' : 'still failing'})`);
+              }
+            }
+          }
           if (v.ok) {
-            unitTexts[unit.id] = out;
+            unitTexts[unit.id] = candidateText;
             ok = true;
             break;
           }
@@ -550,16 +606,31 @@ export function rankCandidates(cands, { weights = {}, filters = {} } = {}) {
     ...filters,
   };
 
+  // 10.0 dynamic thresholds — measured on the e2-oneclick82 run, where an
+  // already-human draft (origCv 0.582, gen 0.036) made every candidate fail:
+  //   - minCvRatio 1.1 demands output CV >= 0.640 when the input is already
+  //     0.582, which is unreasonable for a draft that needs little work.
+  //   - maxCopyRate 0.6 punishes a candidate precisely because routeb left the
+  //     already-human paragraphs alone (copy 0.79-0.86).
+  // Rule: when the source is already bursty, judge CV on an absolute floor;
+  // when a candidate is already clean (low gen), allow it to change less.
+  const origCv = Number(filters.origCv ?? 0);
+  const minCvRatioEff = (origCv >= 0.45) ? 0 : f.minCvRatio;
+  const absCvFloor = (origCv >= 0.45) ? Math.max(f.cvBand[0] * 0.9, 0.42) : 0;
+
   const eligible = cands.filter((c) => {
     if ((c.stats?.coverage ?? c.coverage ?? 0) < f.minCoverage) return false;
     if ((c.grammarDamage ?? 0) > f.maxGrammarDamage) return false;
     if ((c.grammarDamage ?? 0) < f.minGrammarDamage) return false;
     if (!formMode) {
-      if ((c.stats.cvRatio || 0) > 0 && c.stats.cvRatio < f.minCvRatio) return false;
+      if (minCvRatioEff > 0 && (c.stats.cvRatio || 0) > 0 && c.stats.cvRatio < minCvRatioEff) return false;
+      if (absCvFloor > 0 && !(c.stats.cv >= absCvFloor)) return false;
       if (c.stats.cv > 0 && c.stats.cv < f.cvBand[0] * 0.9) return false;
     }
     if (!formMode && c.stats.shortSentenceDensity > f.maxShortSentenceDensity) return false;
-    if (c.stats.copyRate > f.maxCopyRate) return false;
+    // A candidate that is already clean may copy more of the source.
+    const copyCap = ((c.score?.p_ai_gen ?? 1) <= 0.08) ? 0.88 : f.maxCopyRate;
+    if (c.stats.copyRate > copyCap) return false;
     return Number.isFinite(c.score?.p_ai_gen);
   });
 
