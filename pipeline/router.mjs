@@ -38,8 +38,8 @@ function repetitionPairs(text, lang = 'en') {
   return pairs;
 }
 
-/** 狀態分診。gen/cv 可為 null（plan 期只有文本訊號）。 */
-export function classifyDraft({ text, gen = null, cv = null, lang = 'en' }) {
+/** 自動分診主鏈（無覆蓋）。 */
+function classifyAuto({ text, gen = null, cv = null, lang = 'en' }) {
   const signals = {
     citations: citationSpans(text).length,
     refsPresent: referencesPresent(text),
@@ -72,4 +72,17 @@ export function classifyDraft({ text, gen = null, cv = null, lang = 'en' }) {
     return { state: 'S1', signals, advice: '原稿已有完整論證且語言可信：僅做保守編輯（機械標點＋LT＋檢查），不進候選生成。' };
   }
   return { state: 'S2', signals, advice: '標準路線：候選生成→手術→重組→研磨→驗證。' };
+}
+
+/** 狀態分診（對外入口）。routeOverride：--route S1..S5 顯式覆蓋。
+ *  校準 #30：tmr 對新強模型近乎盲（GPT 6.1 稿 gen 0.315 穿過 S1 門 0.40，
+ *  把 78% AI 稿判成保守編輯）——需要人工出口；signals 與自動分診結果照記帳本。 */
+export function classifyDraft(opts) {
+  const auto = classifyAuto(opts);
+  const ov = opts?.routeOverride;
+  if (ov && /^[Ss][1-5]$/.test(String(ov))) {
+    const st = String(ov).toUpperCase();
+    return { ...auto, state: st, override: true, advice: `人工覆蓋路由 --route ${st}（自動分診 ${auto.state}）：${auto.advice}` };
+  }
+  return auto;
 }

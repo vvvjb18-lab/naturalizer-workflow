@@ -23,7 +23,7 @@ import {
   grammarScores, nliPairs, scoreFiles, closeDetector,
   detectDocType, surgicalRepair, assembleCrossover, shouldStopEarly,
   mechanicalPolish, applyWordBudget, scoreTexts, citationConsistency, cloakNumbers, completeUnit, validateUnit, mechanicalBurstify,
-  burstifyCandidate, cvOf, qualityAxis, qualityVerdict, unloadEngine, ENGINES,
+  burstifyCandidate, cvOf,
 } from './candidates.mjs';
 import { grindParas, rescueContradictions, similarityPolish, styleGuard as styleGuardText, repetitionReorg } from './grind.mjs';
 import { createLedger, diffSummary } from './ledger.mjs';
@@ -124,20 +124,6 @@ async function main() {
   if (args.help || !args._.length) { console.log(HELP); process.exit(args.help ? 0 : 1); }
 
   const cfg = JSON.parse(fs.readFileSync(path.join(HERE, 'v6.config.json'), 'utf8'));
-  // 10.0 thresholds only apply when ARCH10=1; without it the risk card and
-  // crossover behave exactly as in 9.0.
-  const ARCH10 = process.env.ARCH10 === '1';
-  const ARCH10_CONFIG = ARCH10 ? {
-    targetCv: cfg.thresholds?.targetCv ?? null,
-    lengthPenalty: cfg.thresholds?.lengthPenalty ?? 0,
-    engineBias: cfg.thresholds?.engineBias ?? {},
-    maxLengthRatio: cfg.thresholds?.maxLengthRatio ?? 1.12,
-    allowContractions: cfg.thresholds?.allowContractions ?? false,
-  } : {
-    targetCv: null, lengthPenalty: 0, engineBias: {},
-    maxLengthRatio: Number.POSITIVE_INFINITY, allowContractions: true,
-  };
-  if (ARCH10) console.log(`  10.0 模式：targetCv=${ARCH10_CONFIG.targetCv ?? '—'} · lengthPenalty=${ARCH10_CONFIG.lengthPenalty}`);
   if (args.k.target) cfg.target = String(args.k.target);
   if (args.k.candidates) {
     const n = Math.max(1, parseInt(args.k.candidates, 10));
@@ -303,28 +289,20 @@ async function main() {
 
     // 9.0 arch90 — L4 帳本建立＋L0 路由（文本期：S5 停改令／S3 警告）
     let ledger = null, route = null, archFullText = null, archOrigCv = null;
-    // 10.0: ARCH10 also needs the ledger and the S1 route (two-stage router).
-    if (arch90 || ARCH10) {
+    if (arch90) {
       ledger = createLedger(workDir, { docId: base });
       archFullText = Array.isArray(plan.paragraphs) && plan.paragraphs.length
         ? plan.paragraphs.map((p) => String(p || '')).join('\n\n')
         : originalProse;
       archOrigCv = cvOf(originalProse, lang);
       ledger.append({ stage: 'original', before: archFullText, after: originalProse, verdict: { pass: true, vetoes: [], dimensions: {} }, meta: { note: '原稿入帳（回退基準）' } });
-      route = classifyDraft({ text: archFullText, gen: null, cv: archOrigCv, lang });
+      route = classifyDraft({ text: archFullText, gen: null, cv: archOrigCv, lang, routeOverride: args.k.route ?? null });
       console.log(`  9.0 路由（文本期）：${route.state} —— ${route.advice}`);
       if (route.state === 'S5') {
-        if (arch90 && !ARCH10) {
-          // 9.0：S5 停改令
-          ledger.append({ stage: 'route', before: archFullText, after: archFullText, verdict: { pass: false, vetoes: [{ ring: 0, rule: 'routeS5', detail: route.advice }], dimensions: {} } });
-          console.error(`9.0 停改令（S5）：${route.advice}`);
-          await closeDetector().catch(() => {});
-          process.exit(ROUTE_EXIT.S5);
-        }
-        // 10.0：学生作业普遍没有 References，S5 全拦会挡掉大多数订单。
-        // 降级为警告——引用/数字一致性仍由 L3 否决环与 citationConsistency 把关。
-        console.log(`  10.0：S5 警告（${route.advice.slice(0, 40)}…）→ 继续，引用一致性交由 L3 把关`);
-        ledger.append({ stage: 'route-warn', before: archFullText, after: archFullText, verdict: { pass: true, vetoes: [], dimensions: {} }, meta: { route: 'S5-degraded', detail: route.advice } });
+        ledger.append({ stage: 'route', before: archFullText, after: archFullText, verdict: { pass: false, vetoes: [{ ring: 0, rule: 'routeS5', detail: route.advice }], dimensions: {} } });
+        console.error(`9.0 停改令（S5）：${route.advice}`);
+        await closeDetector().catch(() => {});
+        process.exit(ROUTE_EXIT.S5);
       }
       if (route.state === 'S3') console.log('  ⚠ S3：論證骨架將於交付時檢查（L2 重組本版僅記錄）');
     }
@@ -388,18 +366,13 @@ async function main() {
     let candidatesN = cfg.candidates;
     // 9.0 arch90 — L0 路由（評分期：S4 退回作者／S1 保守編輯）
     if (arch90) {
-      route = classifyDraft({ text: archFullText, gen: profile.gen, cv: archOrigCv, lang });
+      route = classifyDraft({ text: archFullText, gen: profile.gen, cv: archOrigCv, lang, routeOverride: args.k.route ?? null });
       console.log(`  9.0 路由（評分期）：${route.state} —— ${route.advice}`);
       if (route.state === 'S4') {
-        if (arch90 && !ARCH10) {
-          // 9.0：S4 退回作者
-          ledger.append({ stage: 'route', before: archFullText, after: archFullText, verdict: { pass: false, vetoes: [{ ring: 0, rule: 'routeS4', detail: route.advice }], dimensions: {} } });
-          console.error(`9.0 停改令（S4）：${route.advice}`);
-          await closeDetector().catch(() => {});
-          process.exit(ROUTE_EXIT.S4);
-        }
-        // 10.0：S4 正是并联池的目标文档类，继续
-        console.log(`  10.0：S4（原稿 gen ${fmt(profile.gen, 2)}）→ 并联池处理`);
+        ledger.append({ stage: 'route', before: archFullText, after: archFullText, verdict: { pass: false, vetoes: [{ ring: 0, rule: 'routeS4', detail: route.advice }], dimensions: {} } });
+        console.error(`9.0 停改令（S4）：${route.advice}`);
+        await closeDetector().catch(() => {});
+        process.exit(ROUTE_EXIT.S4);
       }
       if (route.state === 'S1') {
         console.log('=== 9.0 路由：S1 保守編輯（跳過候選生成）===');
@@ -535,23 +508,11 @@ async function main() {
       ? false
       : candidates.length >= (cfg.adaptiveFirst ?? 3)
         && shouldStopEarly(candidates, { formMode: docType.form, target: cfg.target, cvBand: cfg.filters.cvBand, genGate: gc.genGate });
-    // 10.0: engine schedule. Without ARCH10 every slot is hz (9.0 behaviour).
-    // With it, slots alternate across the fine-tuned engines so the pool holds
-    // both voices; the model is unloaded when the slot changes engine.
-    const schedule = ARCH10
-      ? Array.from({ length: candidatesN }, (_, i) =>
-          (process.env.ARCH10_POOL || 'routeb,routeb,routea,routeb,routea,routeb')
-            .split(',').map((x) => x.trim()).filter(Boolean)[i % 6] || 'routeb')
-      : Array(candidatesN).fill('hz');
-    if (ARCH10) console.log(`  10.0 引擎排程：${schedule.join(' → ')}`);
-
     for (let k = 0; k < candidatesN; k++) {
-      const engine = schedule[k] || 'hz';
       const sampling = cfg.samplings[k] || { temperature: 1.0, topP: 0.95 };
-      if (k > 0 && engine !== schedule[k - 1]) await unloadEngine(schedule[k - 1]);
-      console.log(`  candidate ${k + 1}/${cfg.candidates} [${engine}] (temp ${sampling.temperature}, top_p ${sampling.topP})`);
+      console.log(`  candidate ${k + 1}/${cfg.candidates} (temp ${sampling.temperature}, top_p ${sampling.topP})`);
       const gen = await generateCandidate({
-        plan, sampling, retries: cfg.unitRetries ?? 2, lang, styleGuide, engine,
+        plan, sampling, retries: cfg.unitRetries ?? 2, lang, styleGuide,
         log: (m) => console.log(`    ${m}`),
       });
       const prose = Object.keys(gen.paras).length
@@ -561,7 +522,7 @@ async function main() {
       fs.writeFileSync(prosePath, prose + '\n', 'utf8');
       const stats = candidateStats({ originalProse, prose, lang });
       stats.coverage = gen.coverage;
-      const c = { id: k + 1, engine, sampling, prosePath, prose, stats, failures: gen.failures, paras: gen.paras };
+      const c = { id: k + 1, sampling, prosePath, prose, stats, failures: gen.failures, paras: gen.paras };
       c.grammarDamagePre = await damageOf(prose);
       // 8.1: score during generation so the early-stop can gate on gen
       const [earlyScore] = await scoreTexts([prose]);
@@ -631,10 +592,10 @@ async function main() {
     console.log('=== 5/7 選擇 + 段落重組 + NLI 守門 ===');
     let { eligible, rejected } = rankCandidates(candidates, {
       weights: cfg.weights,
-      filters: { ...cfg.filters, formMode: docType.form, origCv: cvOf(originalProse, lang) },
+      filters: { ...cfg.filters, formMode: docType.form },
     });
-    rejected.forEach((c) => console.log(`  cand${c.id} 淘汰（damage=${fmt(c.grammarDamage)} CV=${fmt(c.stats.cv)} cvRatio=${fmt(c.stats.cvRatio, 2)} coverage=${fmt(c.stats.coverage, 2)} copy=${fmt(c.stats.copyRate, 2)} gen=${fmt(c.score?.p_ai_gen)}）`));
-    rejected.forEach((c) => console.log(`  cand${c.id} 淘汰（damage=${fmt(c.grammarDamage)} CV=${fmt(c.stats.cv)} cvRatio=${fmt(c.stats.cvRatio, 2)} coverage=${fmt(c.stats.coverage, 2)} copy=${fmt(c.stats.copyRate, 2)} gen=${fmt(c.score?.p_ai_gen)}）`));
+    rejected.forEach((c) => console.log(`  cand${c.id} 淘汰（damage=${fmt(c.grammarDamage)} CV=${fmt(c.stats.cv)} cvRatio=${fmt(c.stats.cvRatio, 2)} coverage=${fmt(c.stats.coverage, 2)}）`));
+    rejected.forEach((c) => console.log(`  cand${c.id} 淘汰（damage=${fmt(c.grammarDamage)} CV=${fmt(c.stats.cv)} cvRatio=${fmt(c.stats.cvRatio, 2)} coverage=${fmt(c.stats.coverage, 2)}）`));
 
     // 8.3: flat document family — every candidate culled ONLY by the CV band
     // floor (their original CV sits far below the E2-calibrated 0.45). Two
@@ -669,7 +630,7 @@ async function main() {
           fs.writeFileSync(path.join(workDir, `cand${seed.id}.burst.prose.txt`), seed.prose + '\n', 'utf8');
           console.log(`  cand${seed.id} burst 後：CV ${fmt(st.cv, 3)} gen ${fmt(seed.score?.p_ai_gen)} damage ${fmt(seed.grammarDamage)}（${moves.length} 段重造）`);
         }
-        ({ eligible, rejected } = rankCandidates(pool, { weights: cfg.weights, filters: { ...cfg.filters, formMode: docType.form, origCv: cvOf(originalProse, lang) } }));
+        ({ eligible, rejected } = rankCandidates(pool, { weights: cfg.weights, filters: { ...cfg.filters, formMode: docType.form } }));
       }
     }
     if (!eligible.length) {
@@ -677,23 +638,11 @@ async function main() {
       const fallbackPool = rejected.filter((c) => (c.stats?.coverage ?? 0) >= 1 && (c.grammarDamage ?? 1) <= (cfg.filters?.maxGrammarDamage ?? 0.08));
       if (fallbackPool.length && !docType.form && cfg.lowCvFallback?.deliver !== false) {
         chosen = fallbackPool.sort((a, b) => (a.score?.p_ai_gen ?? 1) - (b.score?.p_ai_gen ?? 1))[0];
-        // 10.0: state the actual rejection cause. The old string always blamed
-        // CV, but a candidate can also die on copy rate or cvRatio while its CV
-        // sits inside the band (observed: cand CV 0.591 culled by copy=0.86).
-        const bandLoR = (cfg.filters?.cvBand?.[0] ?? 0.45) * 0.9;
-        const cvShort = (chosen.stats?.cv ?? 0) < bandLoR;
-        const reasons = [];
-        if ((chosen.stats?.coverage ?? 0) < (cfg.filters?.minCoverage ?? 1)) reasons.push('coverage 不足');
-        if ((chosen.stats?.cvRatio ?? 1) < (cfg.filters?.minCvRatio ?? 1.1)) reasons.push(`cvRatio ${fmt(chosen.stats.cvRatio, 2)} < ${cfg.filters?.minCvRatio ?? 1.1}`);
-        if ((chosen.stats?.copyRate ?? 0) > (cfg.filters?.maxCopyRate ?? 0.6)) reasons.push(`copy ${fmt(chosen.stats.copyRate, 2)} > ${cfg.filters?.maxCopyRate ?? 0.6}`);
-        if (!reasons.length) reasons.push(cvShort ? 'CV 低於交付線' : '未達硬過濾門檻');
         bandFallback = {
           cv: chosen.stats.cv, band: cfg.filters?.cvBand ?? [0.45, 0.65],
-          reason: `候選全數被淘汰（${reasons.join('、')}）；交付最佳可用候選`
-            + (cvShort ? '——CV 低於校準帶，未經 Turnitin 驗證' : ''),
-          rejects: reasons,
+          reason: 'CV 低於交付線 0.5（九點校準：CV<0.37 實測 41-98%）——burstify 後仍不足',
         };
-        console.log(`⚠ 降級交付：${reasons.join('、')}——選 cand${chosen.id}（CV ${fmt(chosen.stats.cv, 3)} gen ${fmt(chosen.score?.p_ai_gen)}）`);
+        console.log(`⚠ 帶外交付：選 CV/分數最佳的 cand${chosen.id}（CV ${fmt(chosen.stats.cv, 3)} gen ${fmt(chosen.score?.p_ai_gen)}）——此文檔族的 CV 帶未經 Turnitin 校準，交付前請知悉風險`);
       } else if (arch90) {
         // 9.0: even hard filters killed everything — the ledger #0 (deduped
         // original) is deterministic-green by definition; deliver it and let
@@ -723,25 +672,7 @@ async function main() {
       if (poolOk.length >= 2) {
         const rankAll = rankCandidates(candidates, { weights: cfg.weights, filters: { ...cfg.filters, formMode: docType.form } });
         const paraStats = await paraStatsFor(poolOk);
-        // 10.0: new-engine CV floor + length penalty. Gated behind ARCH10=1 so
-        // the 9.0 path stays byte-identical when the flag is absent.
-        const origWC = candidateStats({ originalProse, prose: originalProse, lang }).words;
-        const xo = assembleCrossover({
-          cands: poolOk,
-          paraStats,
-          cvBand: cfg.filters.cvBand,
-          targetCv: ARCH10_CONFIG.targetCv,
-          lengthPenalty: ARCH10_CONFIG.lengthPenalty,
-          docWords: origWC,
-          engineBias: ARCH10_CONFIG.engineBias,
-          // 10.0: swap in shorter candidates until the document fits. Pure
-          // selection — no text rewriting, so CV/ai_mk of each paragraph stand.
-          lengthConverge: ARCH10 && ARCH10_CONFIG.targetCv
-            ? { maxWords: Math.round(origWC * ARCH10_CONFIG.maxLengthRatio),
-                minCv: ARCH10_CONFIG.targetCv }
-            : {},
-          log: (m) => console.log(m),
-        });
+        const xo = assembleCrossover({ cands: poolOk, paraStats, cvBand: cfg.filters.cvBand });
         const prose = targetIdx.map((i) => xo.paras[i]).filter(Boolean).join('\n\n');
         const stats = candidateStats({ originalProse, prose, lang });
         stats.coverage = 1;
@@ -782,7 +713,7 @@ async function main() {
       }
     }
 
-    ({ eligible, rejected } = rankCandidates(pool, { weights: cfg.weights, filters: { ...cfg.filters, formMode: docType.form, origCv: cvOf(originalProse, lang) } }));
+    ({ eligible, rejected } = rankCandidates(pool, { weights: cfg.weights, filters: { ...cfg.filters, formMode: docType.form } }));
 
     // 8.2: evaluate every eligible candidate (NLI + rescues), then choose by
     // risk with a ppl tie-break — among equal-risk candidates the higher
@@ -860,8 +791,7 @@ async function main() {
         } else {
           console.log(`  ${cid} 救援未修復全部問題段，淘汰`);
         }
-        // 10.0: hard filters passed but NLI objected — keep as last-resort pool
-        if ((arch90 && c.archVerdict?.pass) || (ARCH10 && !arch90)) nliFallback.push(c);
+        if (arch90 && c.archVerdict?.pass) nliFallback.push(c);
         continue;
       }
       passing.push(c);
@@ -871,8 +801,8 @@ async function main() {
       passing.push(...nliFallback);
     }
     if (!passing.length) {
-      if (arch90 || ARCH10) {
-        console.log('  ⚠ 10.0：無候選通過（硬過濾/否決環/NLI）——以去重後原稿交付，風險卡標注為未改寫');
+      if (arch90) {
+        console.log('  ⚠ 9.0：無候選通過（硬過濾/否決環/NLI）——以去重後原稿交付（帳本 #0 為最後綠點）');
         chosen = { id: 'orig', paras: { ...originalsByPara }, prose: originalProse, stats: candidateStats({ originalProse, prose: originalProse, lang }), score: originalScore, grammarDamage: 0, surgeries: [], failures: [], archFrozen: true };
       } else throw new Error('所有 eligible 候選都被 NLI 擋下');
     } else {
@@ -1596,37 +1526,17 @@ async function main() {
         anchorGate,
       };
     }
+    fs.writeFileSync(v6Report, JSON.stringify(report, null, 1), 'utf8');
 
     const rows = pool.map((c) => `| ${c.crossover ? 'X' : c.id}${c.crossover ? '（重組）' : ''} | ${(c.stats.coverage * 100).toFixed(0)}% | ${fmt(c.stats.cv, 3)} | ${fmt(c.grammarDamagePre)} | ${fmt(c.grammarDamage)} | ${(c.surgeries || []).length} | ${fmt(c.score?.perplexity, 1)} | ${fmt(c.score?.p_ai_gen)} | ${fmt(c.score?.p_ai_edit)} | ${fmt(c.nli?.maxContradict)} | ${eligible.includes(c) ? fmt(c.risk) : '淘汰'} |`).join('\n');
     if (arch90) {
       const rep = ledger.report();
       archSection = `\n## 9.0 分層架構（--arch90）\n\n- 路由：**${route?.state || '—'}** —— ${route?.advice || ''}\n- L1 診斷（原稿）：${diag90.issues.length ? diag90.issues.map((x) => `${x.id}〔${x.severity}〕`).join('、') : '無高/中問題'}\n- L3 否決紀錄：${rep.vetoes.length ? rep.vetoes.map((v) => `${v.rule}＠#${v.at}`).join('、') : '無'}\n- 交付否決：${archFinal ? (archFinal.pass ? '全綠 ✓' : `**未過**（${archFinal.vetoes.map((v) => v.rule).join('、')}）`) : '—'}${archRolledBack ? ' · **已回退**' : ''}\n- L2 重複論證重組：${archReorg ? `${archReorg.action}（段對 ${archReorg.pairs ?? 0}，消除 ${archReorg.moves || 0}）` : '—（非 S3 路由）'}\n- L2 骨架存活：${archSkeleton ? (archSkeleton.ok ? '✓' : `✗ ${archSkeleton.problems.join('；')}`) : '—'}\n- L4 帳本：${ledger.file}（${rep.entries} 筆 · 回退點 #${rep.rollbackPoint}）\n`;
     }
-    // 10.0 dual-axis acceptance. The S4 test proved the score axis can pass
-    // while the text still ships reader-visible grammar errors, so the risk card
-    // now reports both axes and states the verdict explicitly.
-    const qa = qualityAxis(chosen.prose || originalProse, originalProse, { lang });
-    const qav = qualityVerdict(qa, {
-      maxLengthRatio: ARCH10_CONFIG.maxLengthRatio,
-      allowContractions: ARCH10_CONFIG.allowContractions,
-    });
-    const qualitySection = `\n## 10.0 雙軌驗收\n\n| 軸 | 指標 | 值 |\n|---|---|---:|\n`
-      + `| 分數 | CV（全篇） | ${fmt(cvOf(chosen.prose || ''), 3)}${ARCH10_CONFIG.targetCv ? `（10.0 目標 ≥ ${ARCH10_CONFIG.targetCv}）` : ''} |\n`
-      + `| 分數 | p_ai_gen | ${fmt(chosen.score?.p_ai_gen)} |\n`
-      + `| 分數 | p_ai_edit | ${fmt(chosen.score?.p_ai_edit)} |\n`
-      + `| 質量 | 語法硬傷 | ${qa.hardErrors}${qa.hardErrors ? `（無句末標點 ${qa.noTerminal} · 無限定動詞 ${qa.noFiniteVerb}）` : ' ✓'} |\n`
-      + `| 質量 | 字數比 | ${qa.lengthRatio}（原 ${qa.origWords} → ${qa.words} 詞） |\n`
-      + `| 質量 | 縮寫率／百詞 | ${qa.contractionRate} |\n`
-      + `\n**${qav.pass ? '兩軸通過 ✓' : `質量軸未過：${qav.fails.join('、')}`}**\n`
-      + (qa.hardErrors ? `\n> 建議：交付前跑 \`python pipeline/l2_fix.py fix <in> <out> en-GB\` 修復語法硬傷（實測不影響 CV 與 ai_mk）。\n` : '');
-    report.qualityAxis = { ...qa, verdict: qav };
-    // write JSON after every report field is populated (10.0)
-    fs.writeFileSync(v6Report, JSON.stringify(report, null, 1), 'utf8');
-
     const md = `# Workflow 8.1 風險卡
 
 - 生成時間：${report.generatedAt}
-- 原稿：${input} · 語言 ${lang} · 型別 **${docType.form ? 'form／模板（V2 配方）' : 'essay（CV 帶）'}**${bandFallback ? `\n- ⚠ **降級交付**：${bandFallback.reason}（成品 CV ${fmt(bandFallback.cv, 3)}，校準帶 ${fmt(bandFallback.band[0], 2)}–${fmt(bandFallback.band[1], 2)}）——建議先送檢一次確認再批量` : ''}
+- 原稿：${input} · 語言 ${lang} · 型別 **${docType.form ? 'form／模板（V2 配方）' : 'essay（CV 帶）'}**${bandFallback ? `\n- ⚠ **帶外交付**：${bandFallback.reason}——CV ${fmt(bandFallback.cv, 3)} 低於校準帶 ${fmt(bandFallback.band[0], 2)}–${fmt(bandFallback.band[1], 2)}，此文檔族未經 Turnitin 驗證，建議先送檢一次確認再批量` : ''}
 - 候選 ${candidates.length}${assembled ? ' + 重組 X' : ''} · 手術 ${pool.reduce((n, c) => n + (c.surgeries || []).length, 0)} 處 · 選定 **${chosen.crossover ? '重組 X' : `cand${chosen.id}`}${chosen.crossover ? `（逐段取自 cand{${Object.values(chosen.provenance).join(',')}}）` : ''}**
 
 ## 候選對照
@@ -1636,7 +1546,7 @@ async function main() {
 ${rows}
 
 原稿基準：ppl ${fmt(originalScore?.perplexity, 1)} · gen ${fmt(originalScore?.p_ai_gen)} · edit ${fmt(originalScore?.p_ai_edit)} · 語法傷率 ${fmt(origDamage)}
-${qualitySection}${budgetStats ? `\n## 字數預算（7.6）\n\n- 上限 ${budgetStats.maxWords}${budgetStats.floorWords != null ? ` · 下限 ${budgetStats.floorWords}` : ''}：**${budgetStats.beforeWords} → ${budgetStats.afterWords} 詞**\n- 刪句 ${budgetStats.deletedSentences}（-${budgetStats.deletedWords} 詞） · 定向壓縮 ${budgetStats.compressedParas} 段${budgetStats.failedCompressions ? ` · 壓縮失敗 ${budgetStats.failedCompressions} 段` : ''}${budgetStats.cutRatio != null ? ` · 削幅 ${(budgetStats.cutRatio * 100).toFixed(0)}%` : ''}\n${budgetStats.cvWarn ? `- ⚠ 壓縮後 CV ${budgetStats.cvWarn} 低於安全帶——建議人工覆核節奏\n` : ''}` : ''}${grindInfo ? `\n## 段級研磨（8.0）\n\n- 動作：**${grindInfo.action === 'applied' ? '採用' : grindInfo.action === 'reverted' ? `回退（${grindInfo.reason}）` : grindInfo.action === 'skipped' ? `跳過（${grindInfo.reason || 'form 模式'}）` : grindInfo.action === 'no-op' ? '無段改善（文本不變）' : '停用'}**\n${grindInfo.preGen != null ? `- 整份 gen：${fmt(grindInfo.preGen)} → ${fmt(grindInfo.postGen)} · 語法傷率：${fmt(grindInfo.postDamage)}\n` : ''}${grindInfo.stats && grindInfo.stats.attempts ? `- 嘗試 ${grindInfo.stats.attempts}＝採用 ${grindInfo.stats.accepted}＋no-gain ${grindInfo.stats.noGain}＋拒收 ${grindInfo.stats.rejected}${grindInfo.stats.failed ? `＋失敗 ${grindInfo.stats.failed}` : ''} · ${grindInfo.stats.roundsRun} 輪\n` : ''}` : ''}${simInfo ? `\n## 查重打磨（8.2）\n\n- 動作：**${simInfo.action === 'applied' ? '採用' : simInfo.action === 'reverted' ? `回退（${simInfo.reason}）` : '無變化'}**\n${simInfo.pplBefore != null ? `- 整份 ppl：${fmt(simInfo.pplBefore, 1)} → ${fmt(simInfo.pplAfter, 1)}（較高＝較少通用措辭）\n` : ''}${simInfo.stats && simInfo.stats.moves && simInfo.stats.moves.length ? `- 改寫句：${simInfo.stats.moves.map((m) => `p${m.para + 1}s${m.sent + 1} ppl ${m.pplBefore}→${m.pplAfter}`).join('、')}\n` : ''}` : ''}${citeCheck && (citeCheck.mismatches.length || citeCheck.checked) ? `\n## 引用一致性（8.2）\n\n- 內文引用 ${citeCheck.checked} 個 · References 條目 ${citeCheck.references} 筆\n${citeCheck.fixes.length ? `- 已自動對齊：${citeCheck.fixes.map((f) => `${f.from} → ${f.to}`).join('、')}\n` : ''}${citeCheck.mismatches.filter((m) => !m.fixed).length ? `- ⚠ 需人工核對：${citeCheck.mismatches.filter((m) => !m.fixed).map((m) => `${m.inText} vs [${m.refYears.join('/')}]`).join('、')}\n` : ''}` : ''}${qFix && qFix.surgeries ? `\n## 二級品質手術（8.2，CoLA < ${qFix.threshold}）\n\n${qFix.list.map((s) => `- 「${s.before}」→「${s.after}」`).join('\n')}\n` : ''}
+${budgetStats ? `\n## 字數預算（7.6）\n\n- 上限 ${budgetStats.maxWords}${budgetStats.floorWords != null ? ` · 下限 ${budgetStats.floorWords}` : ''}：**${budgetStats.beforeWords} → ${budgetStats.afterWords} 詞**\n- 刪句 ${budgetStats.deletedSentences}（-${budgetStats.deletedWords} 詞） · 定向壓縮 ${budgetStats.compressedParas} 段${budgetStats.failedCompressions ? ` · 壓縮失敗 ${budgetStats.failedCompressions} 段` : ''}${budgetStats.cutRatio != null ? ` · 削幅 ${(budgetStats.cutRatio * 100).toFixed(0)}%` : ''}\n${budgetStats.cvWarn ? `- ⚠ 壓縮後 CV ${budgetStats.cvWarn} 低於安全帶——建議人工覆核節奏\n` : ''}` : ''}${grindInfo ? `\n## 段級研磨（8.0）\n\n- 動作：**${grindInfo.action === 'applied' ? '採用' : grindInfo.action === 'reverted' ? `回退（${grindInfo.reason}）` : grindInfo.action === 'skipped' ? `跳過（${grindInfo.reason || 'form 模式'}）` : grindInfo.action === 'no-op' ? '無段改善（文本不變）' : '停用'}**\n${grindInfo.preGen != null ? `- 整份 gen：${fmt(grindInfo.preGen)} → ${fmt(grindInfo.postGen)} · 語法傷率：${fmt(grindInfo.postDamage)}\n` : ''}${grindInfo.stats && grindInfo.stats.attempts ? `- 嘗試 ${grindInfo.stats.attempts}＝採用 ${grindInfo.stats.accepted}＋no-gain ${grindInfo.stats.noGain}＋拒收 ${grindInfo.stats.rejected}${grindInfo.stats.failed ? `＋失敗 ${grindInfo.stats.failed}` : ''} · ${grindInfo.stats.roundsRun} 輪\n` : ''}` : ''}${simInfo ? `\n## 查重打磨（8.2）\n\n- 動作：**${simInfo.action === 'applied' ? '採用' : simInfo.action === 'reverted' ? `回退（${simInfo.reason}）` : '無變化'}**\n${simInfo.pplBefore != null ? `- 整份 ppl：${fmt(simInfo.pplBefore, 1)} → ${fmt(simInfo.pplAfter, 1)}（較高＝較少通用措辭）\n` : ''}${simInfo.stats && simInfo.stats.moves && simInfo.stats.moves.length ? `- 改寫句：${simInfo.stats.moves.map((m) => `p${m.para + 1}s${m.sent + 1} ppl ${m.pplBefore}→${m.pplAfter}`).join('、')}\n` : ''}` : ''}${citeCheck && (citeCheck.mismatches.length || citeCheck.checked) ? `\n## 引用一致性（8.2）\n\n- 內文引用 ${citeCheck.checked} 個 · References 條目 ${citeCheck.references} 筆\n${citeCheck.fixes.length ? `- 已自動對齊：${citeCheck.fixes.map((f) => `${f.from} → ${f.to}`).join('、')}\n` : ''}${citeCheck.mismatches.filter((m) => !m.fixed).length ? `- ⚠ 需人工核對：${citeCheck.mismatches.filter((m) => !m.fixed).map((m) => `${m.inText} vs [${m.refYears.join('/')}]`).join('、')}\n` : ''}` : ''}${qFix && qFix.surgeries ? `\n## 二級品質手術（8.2，CoLA < ${qFix.threshold}）\n\n${qFix.list.map((s) => `- 「${s.before}」→「${s.after}」`).join('\n')}\n` : ''}
 ${formCheck ? `\n## form 檢查\n\n引用 ${formCheck.citations} 個 / 數字 ${formCheck.numbers} 個：${formCheck.missingCitations.length || formCheck.missingNumbers.length ? `**缺 ${formCheck.missingCitations.length} 引用、${formCheck.missingNumbers.length} 數字，需人工核對**` : '全數保留 ✓'}\n` : ''}${arch90 ? archSection : ''}${anchorGate ? renderAnchorSection(anchorGate) : ''}
 ## A → B
 
